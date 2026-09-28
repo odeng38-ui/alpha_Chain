@@ -2,8 +2,9 @@
 
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision: str = "20260921_stage8"
 down_revision: Union[str, None] = "20260921_stage6"
@@ -14,14 +15,14 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     with op.batch_alter_table("feature_snapshot") as batch:
         batch.add_column(sa.Column("formula", sa.String(500), nullable=False, server_default=""))
-        batch.add_column(sa.Column("inputs", sa.JSON(), nullable=False, server_default=sa.text("'{}'::json")))
+        batch.add_column(sa.Column("inputs", sa.JSON(), nullable=False, server_default=sa.text("'{}'")))
         batch.add_column(sa.Column("source_available_at", sa.DateTime(), nullable=True))
         batch.add_column(sa.Column("missing_reason", sa.String(200), nullable=True))
         batch.add_column(sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()))
         batch.create_index("uq_feature_snapshot", ["security_id", "as_of_date", "feature_name", "feature_version"], unique=True)
     with op.batch_alter_table("score_snapshot") as batch:
-        batch.add_column(sa.Column("weights", sa.JSON(), nullable=False, server_default=sa.text("'{}'::json")))
-        batch.add_column(sa.Column("explanations", sa.JSON(), nullable=False, server_default=sa.text("'{}'::json")))
+        batch.add_column(sa.Column("weights", sa.JSON(), nullable=False, server_default=sa.text("'{}'")))
+        batch.add_column(sa.Column("explanations", sa.JSON(), nullable=False, server_default=sa.text("'{}'")))
         batch.add_column(sa.Column("completeness", sa.Float(), nullable=False, server_default="0"))
         batch.add_column(sa.Column("config_hash", sa.String(64), nullable=False, server_default=""))
         batch.add_column(sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()))

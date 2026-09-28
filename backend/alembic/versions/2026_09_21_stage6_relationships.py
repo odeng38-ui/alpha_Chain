@@ -1,9 +1,11 @@
 """stage 6 relationship evidence and review fields"""
 
+import hashlib
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision: str = "20260921_stage6"
 down_revision: Union[str, None] = "20260921_stage5"
@@ -24,7 +26,25 @@ def upgrade() -> None:
         batch.add_column(sa.Column("confidence", sa.Float(), nullable=False, server_default="0"))
         batch.add_column(sa.Column("evidence_hash", sa.String(64), nullable=True))
         batch.add_column(sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()))
-    op.execute("UPDATE relationship_evidence SET source_document = COALESCE(filing_id, 'legacy'), evidence_hash = md5(relationship_id::text || excerpt || COALESCE(location, ''))")
+    connection = op.get_bind()
+    evidence_rows = connection.execute(sa.text(
+        "SELECT id, relationship_id, filing_id, excerpt, location "
+        "FROM relationship_evidence"
+    )).mappings()
+    for row in evidence_rows:
+        hash_input = f"{row['relationship_id']}{row['excerpt']}{row['location'] or ''}"
+        connection.execute(
+            sa.text(
+                "UPDATE relationship_evidence "
+                "SET source_document = :source_document, evidence_hash = :evidence_hash "
+                "WHERE id = :id"
+            ),
+            {
+                "id": row["id"],
+                "source_document": row["filing_id"] or "legacy",
+                "evidence_hash": hashlib.md5(hash_input.encode("utf-8")).hexdigest(),
+            },
+        )
     with op.batch_alter_table("relationship_evidence") as batch:
         batch.alter_column("source_document", nullable=False)
         batch.alter_column("evidence_hash", nullable=False)

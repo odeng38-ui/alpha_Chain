@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.schema import Relationship
+from app.security import require_admin
 from app.services.relationship_service import (
     RELATIONSHIP_TYPES,
     RelationshipCandidate,
@@ -86,16 +87,17 @@ def review_queue(
 
 
 @router.patch("/{relationship_id}/review")
-def review_relationship(relationship_id: int, req: ReviewRequest, db: Session = Depends(get_db)):
-    if req.status not in {"verified", "rejected"}:
-        raise HTTPException(status_code=422, detail="status must be verified or rejected")
+def review_relationship(relationship_id: int, req: ReviewRequest, db: Session = Depends(get_db),
+                        admin_actor: str = Depends(require_admin)):
+    if req.status not in {"verified", "rejected", "expired"}:
+        raise HTTPException(status_code=422, detail="status must be verified, rejected, or expired")
     row = db.get(Relationship, relationship_id)
     if row is None:
         raise HTTPException(status_code=404, detail="relationship not found")
     if not row.evidences:
         raise HTTPException(status_code=409, detail="relationship has no evidence")
     row.status = req.status
-    row.reviewed_by = req.reviewer
+    row.reviewed_by = f"{req.reviewer}:{admin_actor}"
     row.reviewed_at = datetime.utcnow()
     db.commit()
     return {"id": row.id, "status": row.status, "reviewed_by": row.reviewed_by}

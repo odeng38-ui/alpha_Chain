@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = os.getenv("SECRET_KEY", "dev_secret")
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     DART_RAW_DIR: str = os.getenv("DART_RAW_DIR", "./data/dart")
+    ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "")
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000")
     DOCS_ENABLED: bool = os.getenv("DOCS_ENABLED", "true").lower() == "true"
     
@@ -37,8 +38,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self):
-        if self.APP_ENV == "production" and self.SECRET_KEY in {"", "dev_secret"}:
-            raise ValueError("SECRET_KEY must be set in production")
+        if self.APP_ENV == "production":
+            if self.SECRET_KEY in {"", "dev_secret"}:
+                raise ValueError("SECRET_KEY must be set in production")
+            if not self.ADMIN_API_KEY:
+                raise ValueError("ADMIN_API_KEY must be set in production")
         return self
 
     @property

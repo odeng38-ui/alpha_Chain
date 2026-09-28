@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.schema import IdentifierMap, Security
+from app.security import require_admin
 
-router = APIRouter(prefix="/admin", tags=["Admin & Manual Mapping"])
+router = APIRouter(prefix="/admin", tags=["Admin & Manual Mapping"], dependencies=[Depends(require_admin)])
 
 
 class IdentifierCreateRequest(BaseModel):

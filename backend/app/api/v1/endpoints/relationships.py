@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.schema import Relationship
 from app.security import require_admin
+from app.services.audit_service import record_audit
 from app.services.relationship_service import (
     RELATIONSHIP_TYPES,
     RelationshipCandidate,
@@ -96,8 +97,23 @@ def review_relationship(relationship_id: int, req: ReviewRequest, db: Session = 
         raise HTTPException(status_code=404, detail="relationship not found")
     if not row.evidences:
         raise HTTPException(status_code=409, detail="relationship has no evidence")
+    before_state = {
+        "status": row.status,
+        "reviewed_by": row.reviewed_by,
+        "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
+    }
     row.status = req.status
     row.reviewed_by = f"{req.reviewer}:{admin_actor}"
     row.reviewed_at = datetime.utcnow()
+    record_audit(
+        db,
+        actor=req.reviewer,
+        action=f"relationship.{req.status}",
+        resource_type="relationship",
+        resource_id=row.id,
+        before_state=before_state,
+        after_state={"status": row.status, "reviewed_by": row.reviewed_by,
+                     "reviewed_at": row.reviewed_at.isoformat()},
+    )
     db.commit()
     return {"id": row.id, "status": row.status, "reviewed_by": row.reviewed_by}

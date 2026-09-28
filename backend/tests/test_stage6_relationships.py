@@ -5,9 +5,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.v1.endpoints.admin import list_audit_logs
+from app.api.v1.endpoints.relationships import ReviewRequest, review_relationship
 from app.db.session import Base
 from app.main import app
-from app.models.schema import Company, Relationship, RelationshipEvidence
+from app.models.schema import AuditLog, Company, Relationship, RelationshipEvidence
 from app.services.relationship_service import (
     RelationshipCandidate,
     RelationshipExtractionService,
@@ -89,6 +91,32 @@ def test_goldset_metrics():
         "precision": 0.5, "recall": 0.5, "f1": 0.5,
     }
 
+def test_relationship_review_writes_atomic_audit_log():
+    db = Session()
+    source, target = Company(name="Audit Source"), Company(name="Audit Target")
+    db.add_all([source, target])
+    db.commit()
+    service = RelationshipExtractionService()
+    service.persist_candidates(db, source.id, [
+        RelationshipCandidate("Audit Target", "SUPPLIES_TO", "Supplies audit target.", confidence=0.9),
+    ], "Audit Document")
+    edge = db.query(Relationship).one()
+
+    result = review_relationship(
+        edge.id,
+        ReviewRequest(status="expired", reviewer="operator@example.com"),
+        db,
+        "admin-api-key",
+    )
+
+    assert result["status"] == "expired"
+    audit = db.query(AuditLog).one()
+    assert audit.actor == "operator@example.com"
+    assert audit.action == "relationship.expired"
+    assert audit.before_state["status"] == "proposed"
+    assert audit.after_state["status"] == "expired"
+    assert list_audit_logs(db=db, limit=100, offset=0, resource_type="relationship")[0]["id"] == audit.id
+
 
 def test_relationship_review_routes_are_registered():
     paths = app.openapi()["paths"]
@@ -96,3 +124,4 @@ def test_relationship_review_routes_are_registered():
     assert "/api/v1/relationships/candidates" in paths
     assert "/api/v1/relationships/review-queue" in paths
     assert "/api/v1/relationships/{relationship_id}/review" in paths
+    assert "/api/v1/admin/audit-logs" in paths

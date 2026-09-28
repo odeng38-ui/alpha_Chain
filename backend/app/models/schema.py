@@ -356,3 +356,18 @@ class Prediction(Base):
     horizon = Column(String(20), nullable=False, comment="5d, 20d, 60d")
     probability = Column(Float, nullable=False, comment="상승 확률 (0.0~1.0)")
     model_version = Column(String(50), nullable=False)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+    __table_args__ = (Index("ix_audit_log_resource", "resource_type", "resource_id"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    actor = Column(String(200), nullable=False, index=True)
+    action = Column(String(100), nullable=False)
+    resource_type = Column(String(100), nullable=False)
+    resource_id = Column(String(100), nullable=True)
+    before_state = Column(JSON, nullable=True)
+    after_state = Column(JSON, nullable=True)
+    request_id = Column(String(100), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)

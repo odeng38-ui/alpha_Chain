@@ -1,11 +1,11 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models.schema import IdentifierMap, Security
+from app.models.schema import AuditLog, IdentifierMap, Security
 from app.security import require_admin
 
 router = APIRouter(prefix="/admin", tags=["Admin & Manual Mapping"], dependencies=[Depends(require_admin)])
@@ -122,7 +122,34 @@ def update_security_status(
             "ticker": security.ticker,
             "security_type": security.security_type,
             "market": security.market,
+
             "isin": security.isin,
             "company_status": security.company.status if security.company else None
         }
     }
+
+
+@router.get("/audit-logs")
+def list_audit_logs(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    resource_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(AuditLog)
+    if resource_type:
+        query = query.filter(AuditLog.resource_type == resource_type)
+    rows = query.order_by(
+        AuditLog.created_at.desc(), AuditLog.id.desc()
+    ).offset(offset).limit(limit).all()
+    return [{
+        "id": row.id,
+        "actor": row.actor,
+        "action": row.action,
+        "resource_type": row.resource_type,
+        "resource_id": row.resource_id,
+        "before_state": row.before_state,
+        "after_state": row.after_state,
+        "request_id": row.request_id,
+        "created_at": row.created_at,
+    } for row in rows]

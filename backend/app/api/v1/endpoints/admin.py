@@ -7,8 +7,14 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.schema import AuditLog, IdentifierMap, Security
 from app.security import require_admin
+from app.services.monitoring import build_operational_alerts
 
 router = APIRouter(prefix="/admin", tags=["Admin & Manual Mapping"], dependencies=[Depends(require_admin)])
+
+
+@router.get("/alerts")
+def operational_alerts(db: Session = Depends(get_db)):
+    return build_operational_alerts(db)
 
 
 class IdentifierCreateRequest(BaseModel):

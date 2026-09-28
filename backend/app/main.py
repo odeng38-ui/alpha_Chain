@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -14,6 +15,7 @@ from app.config import settings
 from app.db.session import get_db
 from app.jobs.price_jobs import get_scheduler
 from app.logging_config import configure_logging, request_id_context
+from app.metrics import request_metrics
 
 configure_logging(settings.LOG_LEVEL)
 logger = logging.getLogger(__name__)
@@ -50,6 +52,10 @@ async def request_context_middleware(request, call_next):
     started = time.perf_counter()
     try:
         response = await call_next(request)
+        duration = time.perf_counter() - started
+        route = request.scope.get("route")
+        path = getattr(route, "path", request.url.path)
+        request_metrics.observe(request.method, path, response.status_code, duration)
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -61,9 +67,21 @@ async def request_context_middleware(request, call_next):
             request.method,
             request.url.path,
             response.status_code,
-            (time.perf_counter() - started) * 1000,
+            duration * 1000,
         )
         return response
+    except Exception:
+        duration = time.perf_counter() - started
+        route = request.scope.get("route")
+        path = getattr(route, "path", request.url.path)
+        request_metrics.observe(request.method, path, 500, duration)
+        logger.exception(
+            "request failed method=%s path=%s status=500 duration_ms=%.2f",
+            request.method,
+            request.url.path,
+            duration * 1000,
+        )
+        raise
     finally:
         request_id_context.reset(token)
 
@@ -99,3 +117,8 @@ def health_check(db: Session = Depends(get_db)):
         "database": db_status,
         "version": settings.VERSION
     }
+
+
+@app.get("/metrics", response_class=PlainTextResponse, include_in_schema=False)
+def metrics():
+    return request_metrics.render()

@@ -89,3 +89,28 @@ def test_health_check_does_not_expose_database_exception():
             app.dependency_overrides.pop(get_db, None)
         else:
             app.dependency_overrides[get_db] = previous_override
+
+
+def test_metrics_endpoint_reports_route_template():
+    client.get("/health")
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert 'path="/health",status="200"' in response.text
+
+
+def test_admin_alerts_endpoint_reports_missing_sources():
+    previous_override = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        response = client.get("/api/v1/admin/alerts")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "warning"
+        assert response.json()["summary"]["stale_or_missing_sources"] == 3
+    finally:
+        if previous_override is None:
+            app.dependency_overrides.pop(get_db, None)
+        else:
+            app.dependency_overrides[get_db] = previous_override

@@ -35,8 +35,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if settings.DOCS_ENABLED and settings.APP_ENV != "production" else None,
+    redoc_url="/redoc" if settings.DOCS_ENABLED and settings.APP_ENV != "production" else None,
     lifespan=lifespan,
 )
 
@@ -51,6 +51,11 @@ async def request_context_middleware(request, call_next):
     try:
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
         logger.info(
             "request completed method=%s path=%s status=%s duration_ms=%.2f",
             request.method,
@@ -66,10 +71,10 @@ async def request_context_middleware(request, call_next):
 # CORS setup
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 @app.get("/")
@@ -85,8 +90,9 @@ def health_check(db: Session = Depends(get_db)):
     db_status = "ok"
     try:
         db.execute(text("SELECT 1"))
-    except Exception as e:
-        db_status = f"error: {str(e)}"
+    except Exception:
+        logger.exception("database health check failed")
+        db_status = "error"
         
     return {
         "status": "ok" if db_status == "ok" else "degraded",

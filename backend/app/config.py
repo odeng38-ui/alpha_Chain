@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = os.getenv("SECRET_KEY", "dev_secret")
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     DART_RAW_DIR: str = os.getenv("DART_RAW_DIR", "./data/dart")
+    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000")
+    DOCS_ENABLED: bool = os.getenv("DOCS_ENABLED", "true").lower() == "true"
     
     model_config = SettingsConfigDict(
         case_sensitive=True,
@@ -38,5 +40,10 @@ class Settings(BaseSettings):
         if self.APP_ENV == "production" and self.SECRET_KEY in {"", "dev_secret"}:
             raise ValueError("SECRET_KEY must be set in production")
         return self
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """Return the explicit browser origins allowed to call the API."""
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
 settings = Settings()

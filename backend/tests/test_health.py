@@ -39,3 +39,53 @@ def test_health_check():
     data = response.json()
     assert data["status"] == "ok"
     assert data["database"] == "ok"
+
+def test_security_headers_are_applied():
+    response = client.get("/")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+    assert response.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
+    assert response.headers["content-security-policy"] == "default-src 'none'; frame-ancestors 'none'"
+    assert response.headers["x-request-id"]
+
+
+def test_cors_only_allows_configured_origin():
+    allowed = client.options(
+        "/health",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+    denied = client.options(
+        "/health",
+        headers={
+            "Origin": "https://untrusted.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert denied.status_code == 400
+    assert "access-control-allow-origin" not in denied.headers
+
+
+def test_health_check_does_not_expose_database_exception():
+    class BrokenDatabase:
+        def execute(self, _query):
+            raise RuntimeError("postgresql://user:secret@private-host/database")
+
+    previous_override = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = lambda: BrokenDatabase()
+    try:
+        response = client.get("/health")
+        assert response.status_code == 200
+        assert response.json()["database"] == "error"
+        assert "secret" not in response.text
+    finally:
+        if previous_override is None:
+            app.dependency_overrides.pop(get_db, None)
+        else:
+            app.dependency_overrides[get_db] = previous_override

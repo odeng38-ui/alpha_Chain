@@ -1,0 +1,16 @@
+{
+  "version": "bt_v1.0",
+  "quantiles": 5,
+  "commission_bps": 15.0,
+  "slippage_bps": 10.0,
+  "limit_up_threshold": 0.295,
+  "max_entry_delay_days": 7,
+  "train_ratio": 0.6,
+  "validation_ratio": 0.2,
+  "test_ratio": 0.2,
+  "parameter_adjustments": 0,
+  "failure_conditions": {
+    "minimum_test_observations": 20,
+    "maximum_unfilled_rate": 0.2
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "version": "v1.0",
+  "weights": {
+    "Macro": 0.15,
+    "Industry": 0.10,
+    "Fundamental": 0.25,
+    "Momentum": 0.20,
+    "Disclosure": 0.15,
+    "Chain": 0.15
+  },
+  "horizons": ["5d", "20d", "60d"]
+}

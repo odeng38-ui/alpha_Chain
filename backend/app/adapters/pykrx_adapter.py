@@ -10,11 +10,12 @@ pykrx: https://github.com/sharebook-kr/pykrx
 - pykrx 반환 날짜는 KST 기준 거래일
 - DB 저장 시 trade_date는 KST date (timezone-aware 없이 date 타입)
 """
-
 import hashlib
+import io
 import json
 import logging
 import time
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, timedelta
 from typing import List, Optional
 
@@ -28,7 +29,10 @@ logger = logging.getLogger(__name__)
 
 # pykrx는 선택적 의존성 — import 실패 시 명확한 오류 표시
 try:
-    from pykrx import stock as krx_stock
+    # pykrx may print account/session details while initializing. Keep those
+    # third-party diagnostics out of application and container logs.
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        from pykrx import stock as krx_stock
     PYKRX_AVAILABLE = True
 except ImportError:
     PYKRX_AVAILABLE = False

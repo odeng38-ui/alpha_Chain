@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +35,17 @@ class Settings(BaseSettings):
         env_file=(PROJECT_ROOT / ".env", PROJECT_ROOT / f".env.{APP_ENV}"),
         extra="ignore",
     )
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def select_installed_postgres_driver(cls, value: str) -> str:
+        """Keep generic PostgreSQL URLs on the installed psycopg2 driver."""
+        if value.startswith("postgresql://"):
+            return value.replace("postgresql://", "postgresql+psycopg2://", 1)
+        if value.startswith("postgres://"):
+            return value.replace("postgres://", "postgresql+psycopg2://", 1)
+        return value
+
 
     @model_validator(mode="after")
     def validate_production_secrets(self):

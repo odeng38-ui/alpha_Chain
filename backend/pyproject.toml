@@ -17,6 +17,9 @@ dependencies = [
     "APScheduler>=3.10.0",
 ]
 
+[tool.vercel.scripts]
+build = "alembic upgrade head"
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100

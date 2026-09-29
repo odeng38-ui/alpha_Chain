@@ -1,5 +1,24 @@
+[project]
+name = "alpha-chain-backend"
+version = "1.0.0"
+requires-python = "~=3.12.0"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.22.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.6",
+    "alembic>=1.11.1",
+    "redis>=4.6.0",
+    "httpx>=0.24.1",
+    "python-dotenv>=1.0.0",
+    "pykrx>=1.0.45",
+    "APScheduler>=3.10.0",
+]
+
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]

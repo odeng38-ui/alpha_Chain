@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1.endpoints.admin import router as admin_router
 from app.api.v1.endpoints.backtests import router as backtests_router
+from app.api.v1.endpoints.cron import router as cron_router
 from app.api.v1.endpoints.dart import router as dart_router
 from app.api.v1.endpoints.graph import router as graph_router
 from app.api.v1.endpoints.macro import router as macro_router
@@ -16,6 +17,7 @@ api_router.include_router(master_router)
 api_router.include_router(admin_router)
 api_router.include_router(backtests_router)
 api_router.include_router(prices_router)
+api_router.include_router(cron_router)
 api_router.include_router(dart_router)
 api_router.include_router(macro_router)
 api_router.include_router(graph_router)

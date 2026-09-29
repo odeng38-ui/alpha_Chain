@@ -11,7 +11,7 @@ import logging
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.adapters.base import AdapterError, BrokerAdapter
@@ -378,3 +378,43 @@ def incremental_batch_update(
         security_ids=security_ids,
         result=result,
     )
+
+def incremental_due_batch_update(
+    db: Session,
+    *,
+    batch_size: int = 20,
+    adapter: Optional[BrokerAdapter] = None,
+) -> Dict[str, Any]:
+    """Process active securities not successfully collected today."""
+    today = date.today()
+    query = db.query(Security.id).outerjoin(
+        CollectionCheckpoint,
+        and_(
+            CollectionCheckpoint.security_id == Security.id,
+            CollectionCheckpoint.job_name == "daily_price",
+        ),
+    ).filter(
+        Security.security_type == "COMMON",
+        Security.effective_to.is_(None),
+        or_(
+            CollectionCheckpoint.security_id.is_(None),
+            CollectionCheckpoint.status != "SUCCESS",
+            CollectionCheckpoint.last_success_date.is_(None),
+            CollectionCheckpoint.last_success_date < today,
+        ),
+    )
+    total_candidates = query.count()
+    security_ids = [
+        row[0] for row in query.order_by(Security.id).limit(batch_size).all()
+    ]
+    result = incremental_update(db, security_ids=security_ids, adapter=adapter).to_dict()
+    processed = len(security_ids)
+    return {
+        **result,
+        "batch_size": batch_size,
+        "processed": processed,
+        "total_candidates": total_candidates,
+        "remaining": max(total_candidates - processed, 0),
+        "security_ids": security_ids,
+        "has_more": total_candidates > processed,
+    }

@@ -27,8 +27,11 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     DART_RAW_DIR: str = os.getenv("DART_RAW_DIR", "./data/dart")
     ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "")
+    CRON_SECRET: str = os.getenv("CRON_SECRET", "")
+    CRON_BATCH_SIZE: int = int(os.getenv("CRON_BATCH_SIZE", "20"))
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000")
     DOCS_ENABLED: bool = os.getenv("DOCS_ENABLED", "true").lower() == "true"
+    SCHEDULER_ENABLED: bool = os.getenv("SCHEDULER_ENABLED", "true").lower() == "true"
     
     model_config = SettingsConfigDict(
         case_sensitive=True,
@@ -49,6 +52,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self):
+        if os.getenv("VERCEL"):
+            self.SCHEDULER_ENABLED = False
         if self.APP_ENV == "production":
             if self.SECRET_KEY in {"", "dev_secret"}:
                 raise ValueError("SECRET_KEY must be set in production")

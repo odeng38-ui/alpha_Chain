@@ -23,16 +23,20 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """앱 시작 시 스케줄러 시작, 종료 시 정리."""
-    scheduler = get_scheduler()
-    scheduler.start()
-    logger.info("APScheduler 시작 완료")
+    """Run the in-process scheduler only in persistent server environments."""
+    scheduler = None
+    if settings.SCHEDULER_ENABLED:
+        scheduler = get_scheduler()
+        scheduler.start()
+        logger.info("APScheduler started")
+    else:
+        logger.info("APScheduler disabled for this runtime")
     try:
         yield
     finally:
-        scheduler.shutdown(wait=False)
-        logger.info("APScheduler 종료 완료")
-
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
+            logger.info("APScheduler stopped")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

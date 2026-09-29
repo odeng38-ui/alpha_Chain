@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.adapters.base import BrokerAdapter, OHLCVRecord
 from app.db.session import Base
-from app.models.schema import Company, DailyPrice, Security
+from app.models.schema import CollectionCheckpoint, Company, DailyPrice, Security
 from app.services import price_service
 
 # ------------------------------------------------------------------ #
@@ -290,3 +290,36 @@ class TestIncrementalBatchUpdate:
         assert batch["security_ids"] == [first.id]
         assert batch["next_offset"] == 1
         assert batch["has_more"] is True
+
+def test_due_batch_skips_security_already_successful_today(db):
+    completed = create_test_security(db, ticker="005930")
+    company = Company(name="Due Batch Test", corp_code="11223344", status="ACTIVE")
+    db.add(company)
+    db.flush()
+    due = Security(
+        company_id=company.id,
+        market="KOSPI",
+        ticker="000660",
+        security_type="COMMON",
+    )
+    db.add(due)
+    db.flush()
+    db.add(
+        CollectionCheckpoint(
+            job_name="daily_price",
+            security_id=completed.id,
+            last_success_date=date.today(),
+            status="SUCCESS",
+        )
+    )
+    db.commit()
+
+    result = price_service.incremental_due_batch_update(
+        db,
+        batch_size=1,
+        adapter=MockAdapter([]),
+    )
+
+    assert result["security_ids"] == [due.id]
+    assert result["processed"] == 1
+    assert result["has_more"] is False

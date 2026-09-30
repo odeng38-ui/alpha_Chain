@@ -98,10 +98,21 @@ def sync_master_data(
 
 
 @router.post("/sync-provider")
-def sync_master_from_provider(db: Session = Depends(get_db)):
+def sync_master_from_provider(
+    offset: int = 0,
+    batch_size: int = 200,
+    db: Session = Depends(get_db),
+):
+    if offset < 0 or batch_size < 1 or batch_size > 500:
+        raise HTTPException(status_code=400, detail="offset or batch_size is out of range")
     try:
         return sync_provider_master(
-            db, settings.DART_API_KEY, krx_id=settings.KRX_ID, krx_pw=settings.KRX_PW
+            db,
+            settings.DART_API_KEY,
+            krx_id=settings.KRX_ID,
+            krx_pw=settings.KRX_PW,
+            offset=offset,
+            limit=batch_size,
         )
     except (ValueError, httpx.HTTPError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

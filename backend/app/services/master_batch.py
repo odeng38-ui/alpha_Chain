@@ -1,4 +1,4 @@
-﻿import csv
+import csv
 import io
 import os
 import zipfile
@@ -66,7 +66,9 @@ def load_identifier_supplement(path: Optional[str]) -> Dict[str, Dict[str, str]]
 def sync_provider_master(db: Session, dart_api_key: str,
                          as_of: Optional[date] = None,
                          supplement_csv: Optional[str] = None,
-                         krx_id: str = "", krx_pw: str = "") -> Dict[str, Any]:
+                         krx_id: str = "", krx_pw: str = "",
+                         offset: int = 0,
+                         limit: Optional[int] = None) -> Dict[str, Any]:
     as_of = as_of or date.today()
     dart = fetch_dart_corporations(dart_api_key)
     supplement = load_identifier_supplement(supplement_csv)
@@ -74,7 +76,19 @@ def sync_provider_master(db: Session, dart_api_key: str,
     unmapped = []
     seen_tickers = set()
 
-    for listing in fetch_krx_listings(as_of, krx_id, krx_pw):
+    listings = [] if os.getenv("VERCEL") else list(fetch_krx_listings(as_of, krx_id, krx_pw))
+    source = "KRX_DART"
+    if not listings:
+        source = "DART_FALLBACK"
+        listings = [
+            {"ticker": ticker, "name": corp["corp_name"], "market": "UNKNOWN"}
+            for ticker, corp in sorted(dart.items())
+        ]
+
+    total_candidates = len(listings)
+    selected_listings = listings[offset:offset + limit] if limit is not None else listings[offset:]
+
+    for listing in selected_listings:
         ticker = listing["ticker"]
         seen_tickers.add(ticker)
         corp = dart.get(ticker)
@@ -94,17 +108,29 @@ def sync_provider_master(db: Session, dart_api_key: str,
 
     result = CompanySecurityMasterService.sync_master_records(db, records)
     closed = 0
-    active = db.query(Security).filter(Security.effective_to.is_(None)).all()
-    for security in active:
-        if security.ticker not in seen_tickers:
-            security.effective_to = as_of
-            security.delisted_at = security.delisted_at or as_of
-            if security.company:
-                security.company.status = "DELISTED"
-            for identifier in security.identifier_maps:
-                if identifier.effective_to is None:
-                    identifier.effective_to = as_of
-            closed += 1
+    is_full_sync = offset == 0 and limit is None
+    if is_full_sync:
+        active = db.query(Security).filter(Security.effective_to.is_(None)).all()
+        for security in active:
+            if security.ticker not in seen_tickers:
+                security.effective_to = as_of
+                security.delisted_at = security.delisted_at or as_of
+                if security.company:
+                    security.company.status = "DELISTED"
+                for identifier in security.identifier_maps:
+                    if identifier.effective_to is None:
+                        identifier.effective_to = as_of
+                closed += 1
     db.commit()
-    return {**result, "closed": closed, "unmapped_count": len(unmapped), "unmapped": unmapped}
+    next_offset = offset + len(selected_listings)
+    return {
+        **result,
+        "source": source,
+        "total_candidates": total_candidates,
+        "next_offset": next_offset if next_offset < total_candidates else None,
+        "has_more": next_offset < total_candidates,
+        "closed": closed,
+        "unmapped_count": len(unmapped),
+        "unmapped": unmapped,
+    }
 

@@ -225,3 +225,40 @@ def test_empty_mapping_report_does_not_pass():
     assert report["summary"]["mapping_rate_percent"] == 0.0
     assert report["summary"]["target_99pct_met"] is False
     db.close()
+
+def test_provider_sync_uses_batched_dart_fallback_on_vercel(monkeypatch):
+    from app.services import master_batch
+
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.setattr(
+        master_batch,
+        "fetch_dart_corporations",
+        lambda _key: {
+            "000001": {"corp_code": "00000001", "corp_name": "Alpha"},
+            "000002": {"corp_code": "00000002", "corp_name": "Beta"},
+        },
+    )
+
+    db = TestingSessionLocal()
+    result = master_batch.sync_provider_master(
+        db,
+        "test-key",
+        offset=0,
+        limit=1,
+    )
+
+    assert result["source"] == "DART_FALLBACK"
+    assert result["total_candidates"] == 2
+    assert result["total_processed"] == 1
+    assert result["next_offset"] == 1
+    assert result["has_more"] is True
+    assert result["closed"] == 0
+    security = db.query(Security).one()
+    assert security.ticker == "000001"
+    assert security.market == "UNKNOWN"
+    db.close()
+
+
+def test_provider_sync_rejects_invalid_batch_size():
+    response = client.post("/api/v1/master/sync-provider?batch_size=501")
+    assert response.status_code == 400

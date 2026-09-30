@@ -8,6 +8,7 @@ PriceService — 백필(backfill) 및 증분(incremental) 주가 수집 오케�
 """
 
 import logging
+import os
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.base import AdapterError, BrokerAdapter
 from app.adapters.pykrx_adapter import PykrxAdapter
+from app.adapters.yahoo_adapter import YahooFinanceAdapter
 from app.models.schema import CollectionCheckpoint, DailyPrice, Security
 
 logger = logging.getLogger(__name__)
@@ -27,7 +29,7 @@ _default_adapter: Optional[BrokerAdapter] = None
 def get_default_adapter() -> BrokerAdapter:
     global _default_adapter
     if _default_adapter is None:
-        _default_adapter = PykrxAdapter()
+        _default_adapter = YahooFinanceAdapter() if os.getenv("VERCEL") else PykrxAdapter()
     return _default_adapter
 
 

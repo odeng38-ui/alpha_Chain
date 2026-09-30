@@ -106,7 +106,10 @@ def sync_provider_master(db: Session, dart_api_key: str,
             "listed_at": date.fromisoformat(extra["listed_at"]) if extra.get("listed_at") else None,
         })
 
-    result = CompanySecurityMasterService.sync_master_records(db, records)
+    if source == "DART_FALLBACK":
+        result = CompanySecurityMasterService.sync_master_records_bulk(db, records)
+    else:
+        result = CompanySecurityMasterService.sync_master_records(db, records)
     closed = 0
     is_full_sync = offset == 0 and limit is None
     if is_full_sync:

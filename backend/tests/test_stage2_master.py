@@ -256,6 +256,17 @@ def test_provider_sync_uses_batched_dart_fallback_on_vercel(monkeypatch):
     security = db.query(Security).one()
     assert security.ticker == "000001"
     assert security.market == "UNKNOWN"
+
+    repeated = master_batch.sync_provider_master(
+        db,
+        "test-key",
+        offset=0,
+        limit=1,
+    )
+    assert repeated["inserted"] == 0
+    assert repeated["updated"] == 1
+    assert db.query(Security).count() == 1
+    assert db.query(IdentifierMap).count() == 2
     db.close()
 
 

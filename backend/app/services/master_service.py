@@ -1,4 +1,4 @@
-﻿import re
+import re
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -195,6 +195,148 @@ class CompanySecurityMasterService:
             "errors_count": len(errors),
             "errors": errors
         }
+    @classmethod
+    def sync_master_records_bulk(cls, db: Session, records: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Bulk upsert trusted provider records with a bounded number of DB round trips."""
+        if not records:
+            return {
+                "total_processed": 0,
+                "inserted": 0,
+                "updated": 0,
+                "errors_count": 0,
+                "errors": [],
+            }
 
+        corp_codes = {str(record["corp_code"]).zfill(8) for record in records}
+        tickers = {str(record["ticker"]).zfill(6) for record in records}
+        companies = {
+            company.corp_code: company
+            for company in db.query(Company).filter(Company.corp_code.in_(corp_codes)).all()
+        }
+        inserted_codes = set()
 
+        for record in records:
+            corp_code = str(record["corp_code"]).zfill(8)
+            company = companies.get(corp_code)
+            if company is None:
+                company = Company(
+                    corp_code=corp_code,
+                    name=record["name"].strip(),
+                    status=record.get("status", "ACTIVE").upper(),
+                    industry_id=record.get("industry_id"),
+                )
+                db.add(company)
+                companies[corp_code] = company
+                inserted_codes.add(corp_code)
+            else:
+                company.name = record["name"].strip()
+                company.status = record.get("status", "ACTIVE").upper()
+                if record.get("industry_id"):
+                    company.industry_id = record["industry_id"]
+        db.flush()
 
+        securities = {
+            security.ticker: security
+            for security in db.query(Security).filter(
+                Security.ticker.in_(tickers), Security.effective_to.is_(None)
+            ).all()
+        }
+        ordered_securities = []
+        for record in records:
+            corp_code = str(record["corp_code"]).zfill(8)
+            ticker = str(record["ticker"]).zfill(6)
+            company = companies[corp_code]
+            security = securities.get(ticker)
+            if security is None:
+                security = Security(
+                    company_id=company.id,
+                    market=record.get("market", "UNKNOWN").upper(),
+                    ticker=ticker,
+                    isin=record.get("isin"),
+                    security_type=record.get("security_type")
+                    or cls.classify_security_type(record["name"].strip(), ticker),
+                    listed_at=record.get("listed_at"),
+                    delisted_at=record.get("delisted_at"),
+                    effective_from=record.get("listed_at"),
+                    effective_to=(
+                        record.get("delisted_at")
+                        if record.get("status", "ACTIVE").upper() == "DELISTED"
+                        else None
+                    ),
+                )
+                db.add(security)
+                securities[ticker] = security
+            else:
+                security.company_id = company.id
+                security.market = record.get("market", security.market).upper()
+                security.security_type = record.get(
+                    "security_type"
+                ) or cls.classify_security_type(record["name"].strip(), ticker)
+                if record.get("isin"):
+                    security.isin = record["isin"]
+            ordered_securities.append(security)
+        db.flush()
+
+        identifier_specs = []
+        observed_at = date.today()
+        for record, security in zip(records, ordered_securities):
+            company = companies[str(record["corp_code"]).zfill(8)]
+            identifier_specs.extend(
+                [
+                    (
+                        "DART_CORP_CODE",
+                        str(record["corp_code"]).zfill(8),
+                        company.id,
+                        security.id,
+                    ),
+                    (
+                        "KRX_TICKER",
+                        str(record["ticker"]).zfill(6),
+                        company.id,
+                        security.id,
+                    ),
+                ]
+            )
+            if record.get("isin"):
+                identifier_specs.append(("ISIN", record["isin"], company.id, security.id))
+            if record.get("eng_ticker"):
+                identifier_specs.append(
+                    ("ENG_TICKER", record["eng_ticker"], company.id, security.id)
+                )
+
+        sources = {spec[0] for spec in identifier_specs}
+        values = {spec[1] for spec in identifier_specs}
+        identifiers = {
+            (identifier.source, identifier.source_id_value): identifier
+            for identifier in db.query(IdentifierMap).filter(
+                IdentifierMap.source.in_(sources),
+                IdentifierMap.source_id_value.in_(values),
+                IdentifierMap.effective_to.is_(None),
+            ).all()
+        }
+        for source, value, company_id, security_id in identifier_specs:
+            identifier = identifiers.get((source, value))
+            if identifier is None:
+                identifier = IdentifierMap(
+                    company_id=company_id,
+                    security_id=security_id,
+                    source=source,
+                    source_id_value=value,
+                    is_primary=True,
+                    effective_from=observed_at,
+                )
+                db.add(identifier)
+                identifiers[(source, value)] = identifier
+            else:
+                identifier.company_id = company_id
+                identifier.security_id = security_id
+
+        db.commit()
+        inserted = len(inserted_codes)
+        return {
+            "total_processed": len(records),
+            "inserted": inserted,
+            "updated": len(records) - inserted,
+            "errors_count": 0,
+            "errors": [],
+        }

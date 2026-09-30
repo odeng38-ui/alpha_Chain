@@ -125,10 +125,24 @@ class YahooFinanceAdapter(BrokerAdapter):
         end_date: date,
         market: str = "KOSPI",
     ) -> List[date]:
-        current = start_date
-        days = []
-        while current <= end_date:
-            if current.weekday() < 5:
-                days.append(current)
-            current += timedelta(days=1)
-        return days
+        period1 = int(datetime.combine(start_date, time.min, timezone.utc).timestamp())
+        period2 = int(
+            datetime.combine(end_date + timedelta(days=1), time.min, timezone.utc).timestamp()
+        )
+        response = httpx.get(
+            "https://query1.finance.yahoo.com/v8/finance/chart/%5EKS11",
+            params={"period1": period1, "period2": period2, "interval": "1d"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=self.timeout,
+        )
+        try:
+            response.raise_for_status()
+            result = response.json()["chart"]["result"][0]
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+            raise AdapterError("Yahoo Finance trading-day request failed") from exc
+        offset = int(result.get("meta", {}).get("gmtoffset") or 32400)
+        local_timezone = timezone(timedelta(seconds=offset))
+        return [
+            datetime.fromtimestamp(value, timezone.utc).astimezone(local_timezone).date()
+            for value in result.get("timestamp") or []
+        ]

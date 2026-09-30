@@ -47,7 +47,7 @@ class ReviewRequest(BaseModel):
     reviewer: str = Field(min_length=1)
 
 
-@router.post("/extract")
+@router.post("/extract", dependencies=[Depends(require_admin)])
 def extract_relationships(req: ExtractRequest, db: Session = Depends(get_db)):
     return service.extract_and_persist(
         db, req.source_company_id, req.text, source_document=req.source_document,
@@ -55,7 +55,7 @@ def extract_relationships(req: ExtractRequest, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/candidates")
+@router.post("/candidates", dependencies=[Depends(require_admin)])
 def submit_llm_candidate(req: CandidateRequest, db: Session = Depends(get_db)):
     if req.relationship_type not in RELATIONSHIP_TYPES:
         raise HTTPException(status_code=422, detail="unsupported relationship type")

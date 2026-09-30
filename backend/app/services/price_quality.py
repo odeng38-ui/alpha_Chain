@@ -1,4 +1,4 @@
-﻿"""
+"""
 PriceQualityService — 일봉 데이터 품질 자동 검사.
 
 검사 항목:
@@ -10,6 +10,7 @@ PriceQualityService — 일봉 데이터 품질 자동 검사.
 """
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -19,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.base import BrokerAdapter
 from app.adapters.pykrx_adapter import PykrxAdapter
+from app.adapters.yahoo_adapter import YahooFinanceAdapter
 from app.models.schema import DailyPrice, Security
 
 logger = logging.getLogger(__name__)
@@ -158,7 +160,7 @@ class PriceQualityService:
     @property
     def adapter(self) -> BrokerAdapter:
         if self._adapter is None:
-            self._adapter = PykrxAdapter()
+            self._adapter = YahooFinanceAdapter() if os.getenv("VERCEL") else PykrxAdapter()
         return self._adapter
 
     def check_security(

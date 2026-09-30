@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.schema import BacktestRun
+from app.security import require_admin
 from app.services.backtest_service import BacktestService
 
 router = APIRouter(prefix="/backtests", tags=["Backtests"])
@@ -22,7 +23,7 @@ class BacktestRequest(BaseModel):
     config_override: Optional[Dict] = None
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_admin)])
 def run_backtest(req: BacktestRequest, db: Session = Depends(get_db)):
     try:
         row = service.run(

@@ -7,12 +7,13 @@ from app.adapters.fred_adapter import FredAdapter
 from app.config import settings
 from app.db.session import get_db
 from app.models.schema import MacroObservation, MacroSeries
+from app.security import require_admin
 from app.services.fred_service import FredCollectionService
 
 router = APIRouter(prefix="/macro", tags=["Macro"])
 
 
-@router.post("/sync")
+@router.post("/sync", dependencies=[Depends(require_admin)])
 def sync_macro(db: Session = Depends(get_db)):
     service = FredCollectionService(FredAdapter(settings.FRED_API_KEY))
     return service.sync(db)

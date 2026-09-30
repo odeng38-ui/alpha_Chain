@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.jobs import price_collection_runner
 from app.models.schema import CollectionCheckpoint, DailyPrice, Security
+from app.security import require_admin
 from app.services import price_quality, price_service
 
 router = APIRouter(prefix="/prices", tags=["Prices"])
@@ -106,12 +107,12 @@ def get_collection_status(db: Session = Depends(get_db)):
         } for checkpoint, security in failures],
     }
 
-@router.post("/collection-run/start", summary="Start or resume background price collection")
+@router.post("/collection-run/start", summary="Start or resume background price collection", dependencies=[Depends(require_admin)])
 def start_background_collection(req: BackgroundCollectionRequest):
     return price_collection_runner.start_collection(req.batch_size)
 
 
-@router.post("/collection-run/stop", summary="Stop background price collection")
+@router.post("/collection-run/stop", summary="Stop background price collection", dependencies=[Depends(require_admin)])
 def stop_background_collection():
     return price_collection_runner.stop_collection()
 
@@ -202,7 +203,7 @@ def get_prices(
     }
 
 
-@router.post("/backfill", summary="백필 수집 트리거")
+@router.post("/backfill", summary="백필 수집 트리거", dependencies=[Depends(require_admin)])
 def trigger_backfill(
     req: BackfillRequest,
     db: Session = Depends(get_db),
@@ -226,7 +227,7 @@ def trigger_backfill(
     return {"status": "completed", "results": results}
 
 
-@router.post("/incremental", summary="증분 수집 트리거")
+@router.post("/incremental", summary="증분 수집 트리거", dependencies=[Depends(require_admin)])
 def trigger_incremental(
     req: IncrementalRequest = Body(default=IncrementalRequest()),
     db: Session = Depends(get_db),

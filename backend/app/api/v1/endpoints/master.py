@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db.session import get_db
 from app.models.schema import Company, IdentifierMap
+from app.security import require_admin
 from app.services.master_batch import sync_provider_master
 from app.services.master_service import CompanySecurityMasterService
 from app.services.report_service import MappingReportService
@@ -84,7 +85,7 @@ def get_mapping_report(db: Session = Depends(get_db)):
     return MappingReportService.generate_mapping_report(db)
 
 
-@router.post("/sync")
+@router.post("/sync", dependencies=[Depends(require_admin)])
 def sync_master_data(
     records: List[Dict[str, Any]],
     db: Session = Depends(get_db)
@@ -97,7 +98,7 @@ def sync_master_data(
     return CompanySecurityMasterService.sync_master_records(db, records)
 
 
-@router.post("/sync-provider")
+@router.post("/sync-provider", dependencies=[Depends(require_admin)])
 def sync_master_from_provider(
     offset: int = 0,
     batch_size: int = 200,

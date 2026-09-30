@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.schema import AlphaWeightConfig, FeatureSnapshot, ScoreSnapshot
+from app.security import require_admin
 from app.services.alpha_score_service import AlphaScoreService
 
 router = APIRouter(prefix="/scores", tags=["Alpha Score"])
@@ -46,12 +47,12 @@ def serialize_score(row: ScoreSnapshot, features):
     }
 
 
-@router.post("/batch")
+@router.post("/batch", dependencies=[Depends(require_admin)])
 def calculate_batch(req: ScoreBatchRequest, db: Session = Depends(get_db)):
     return service.batch(db, req.as_of_date, req.security_ids, req.horizon, req.version)
 
 
-@router.post("/security/{security_id}/calculate")
+@router.post("/security/{security_id}/calculate", dependencies=[Depends(require_admin)])
 def calculate_score(
     security_id: int, as_of: date, horizon: str = "20d", version: str = "v1.0",
     db: Session = Depends(get_db),
@@ -84,7 +85,7 @@ def score_explanation(
     return serialize_score(row, features)
 
 
-@router.post("/config/weights")
+@router.post("/config/weights", dependencies=[Depends(require_admin)])
 def create_weight_version(req: WeightConfigRequest, db: Session = Depends(get_db)):
     try:
         row = service.save_weights(db, req.version, req.weights, req.changed_by, req.reason)

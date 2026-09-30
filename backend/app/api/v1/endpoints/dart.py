@@ -11,6 +11,7 @@ from app.config import settings
 from app.db.session import get_db
 from app.jobs import dart_collection_runner
 from app.models.schema import Company, DartSyncState, Filing
+from app.security import require_admin
 from app.services.dart_service import DartCollectionService
 
 router = APIRouter(prefix="/dart", tags=["DART"])
@@ -31,7 +32,7 @@ class DartBackgroundRequest(BaseModel):
     batch_size: int = Field(default=2, ge=1, le=20)
     financial_years: list[str] = Field(default_factory=lambda: [str(date.today().year - 2), str(date.today().year - 1)])
     retry_failed: bool = False
-@router.post("/sync")
+@router.post("/sync", dependencies=[Depends(require_admin)])
 def sync_dart(req: DartSyncRequest, db: Session = Depends(get_db)):
     query = db.query(Company).filter(Company.corp_code.isnot(None))
     if req.company_ids:
@@ -59,7 +60,7 @@ def sync_dart(req: DartSyncRequest, db: Session = Depends(get_db)):
     return {"companies": len(companies), "results": results}
 
 
-@router.post("/collection-run/start")
+@router.post("/collection-run/start", dependencies=[Depends(require_admin)])
 def start_dart_collection(req: DartBackgroundRequest):
     if req.start_date > req.end_date:
         raise HTTPException(status_code=400, detail="start_date must not be after end_date")
@@ -71,7 +72,7 @@ def start_dart_collection(req: DartBackgroundRequest):
     )
 
 
-@router.post("/collection-run/stop")
+@router.post("/collection-run/stop", dependencies=[Depends(require_admin)])
 def stop_dart_collection():
     return dart_collection_runner.stop_collection()
 

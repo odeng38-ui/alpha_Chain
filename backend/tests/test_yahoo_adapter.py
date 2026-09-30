@@ -116,3 +116,25 @@ def test_yahoo_adapter_rejects_empty_prices(monkeypatch):
             date(2024, 1, 2),
             "UNKNOWN",
         )
+
+def test_yahoo_adapter_uses_index_for_trading_days(monkeypatch):
+    payload = {
+        "chart": {
+            "result": [{
+                "meta": {"gmtoffset": 32400},
+                "timestamp": [1704157200, 1704243600],
+                "indicators": {},
+            }],
+        }
+    }
+    monkeypatch.setattr(
+        "app.adapters.yahoo_adapter.httpx.get",
+        lambda *args, **kwargs: FakeResponse(payload),
+    )
+
+    days = YahooFinanceAdapter().get_trading_days(
+        date(2024, 1, 2),
+        date(2024, 1, 3),
+    )
+
+    assert days == [date(2024, 1, 2), date(2024, 1, 3)]

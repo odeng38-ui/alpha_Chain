@@ -371,3 +371,31 @@ class AuditLog(Base):
     after_state = Column(JSON, nullable=True)
     request_id = Column(String(100), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+class GlobalEvent(Base):
+    """A point-in-time external event that may propagate into Korean equities."""
+
+    __tablename__ = "global_event"
+    __table_args__ = (
+        Index("ix_global_event_occurred_kind", "occurred_at", "event_kind"),
+        Index("ix_global_event_symbol_occurred", "symbol", "occurred_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    external_id = Column(String(250), nullable=False, unique=True, index=True)
+    source = Column(String(50), nullable=False)
+    origin_country = Column(String(2), nullable=False, default="US")
+    event_kind = Column(String(50), nullable=False, index=True)
+    symbol = Column(String(50), nullable=True, index=True)
+    title = Column(String(500), nullable=False)
+    summary = Column(Text, nullable=True)
+    direction = Column(String(20), nullable=True)
+    occurred_at = Column(DateTime, nullable=False, index=True)
+    available_at = Column(DateTime, nullable=False, index=True)
+    return_1d = Column(Float, nullable=True)
+    zscore_20d = Column(Float, nullable=True)
+    shock_score = Column(Float, nullable=False)
+    event_metadata = Column("metadata", JSON, nullable=False, default=dict)
+    raw_hash = Column(String(64), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

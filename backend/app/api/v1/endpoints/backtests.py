@@ -45,16 +45,6 @@ def list_backtests(limit: int = Query(20, ge=1, le=200), db: Session = Depends(g
              "dataset_hash": row.dataset_hash, "created_at": row.created_at} for row in rows]
 
 
-@router.get("/{run_id}")
-def get_backtest(run_id: int, db: Session = Depends(get_db)):
-    row = db.get(BacktestRun, run_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="backtest not found")
-    return {"id": row.id, "name": row.name, "status": row.status,
-            "score_version": row.score_version, "horizon": row.horizon,
-            "dataset_hash": row.dataset_hash, "config": row.config,
-            "parameter_adjustments": row.parameter_adjustments, "report": row.report}
-
 class EventImpactBacktestRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     start: Optional[date] = None
@@ -75,3 +65,14 @@ def run_event_impact_backtest(req: EventImpactBacktestRequest,
     )
     return {"id": row.id, "status": row.status,
             "dataset_hash": row.dataset_hash, "report": row.report}
+
+
+@router.get("/{run_id}")
+def get_backtest(run_id: int, db: Session = Depends(get_db)):
+    row = db.get(BacktestRun, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="backtest not found")
+    return {"id": row.id, "name": row.name, "status": row.status,
+            "score_version": row.score_version, "horizon": row.horizon,
+            "dataset_hash": row.dataset_hash, "config": row.config,
+            "parameter_adjustments": row.parameter_adjustments, "report": row.report}

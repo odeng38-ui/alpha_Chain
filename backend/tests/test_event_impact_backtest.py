@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.v1.endpoints import backtests
 from app.db.session import Base
 from app.models.schema import BacktestRun, Company, DailyPrice, GlobalEvent, Security
 from app.services.event_impact_backtest_service import EventImpactBacktestService
@@ -52,3 +53,7 @@ def test_event_backtest_is_point_in_time_and_reproducible():
     assert first.report["samples"][0]["available_at"] == "2025-01-03T00:00:00"
     assert db.query(BacktestRun).count() == 2
     db.close()
+
+def test_static_event_backtest_route_precedes_dynamic_run_route():
+    paths = [route.path for route in backtests.router.routes]
+    assert paths.index("/backtests/event-impact") < paths.index("/backtests/{run_id}")

@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 
 from app.adapters.us_market_adapter import YahooUSMarketAdapter
 from app.db.session import get_db
-from app.models.schema import GlobalEvent
+from app.models.schema import Company, EventImpactCandidate, GlobalEvent, Security
 from app.security import require_admin
+from app.services.event_impact_service import EventImpactService
 from app.services.us_market_event_service import USMarketEventService
 
 router = APIRouter(prefix="/global-events", tags=["Global Events"])
@@ -35,3 +36,25 @@ def list_events(symbol: str | None = None, direction: str | None = None,
         "available_at": row.available_at.isoformat(), "return_1d": row.return_1d,
         "zscore_20d": row.zscore_20d, "shock_score": row.shock_score,
     } for row in rows]}
+
+@router.post("/{event_id}/impact-candidates/generate", dependencies=[Depends(require_admin)])
+def generate_impact_candidates(event_id: int, limit: int = Query(100, ge=1, le=500),
+                               db: Session = Depends(get_db)):
+    return EventImpactService().generate(db, event_id, limit)
+
+
+@router.get("/{event_id}/impact-candidates")
+def list_impact_candidates(event_id: int, limit: int = Query(100, ge=1, le=500),
+                           db: Session = Depends(get_db)):
+    rows = db.query(EventImpactCandidate, Security, Company).join(
+        Security, Security.id == EventImpactCandidate.security_id
+    ).join(Company, Company.id == Security.company_id).filter(
+        EventImpactCandidate.event_id == event_id
+    ).order_by(EventImpactCandidate.rank).limit(limit).all()
+    return {"event_id": event_id, "count": len(rows), "data": [{
+        "rank": candidate.rank, "security_id": security.id, "ticker": security.ticker,
+        "market": security.market, "company_id": company.id, "company_name": company.name,
+        "industry_id": candidate.industry_id, "impact_score": candidate.impact_score,
+        "confidence": candidate.confidence, "exposure": candidate.exposure,
+        "version": candidate.version, "explanation": candidate.explanation,
+    } for candidate, security, company in rows]}

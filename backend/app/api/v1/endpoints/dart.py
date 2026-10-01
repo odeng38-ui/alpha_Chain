@@ -13,6 +13,7 @@ from app.jobs import dart_collection_runner
 from app.models.schema import Company, DartSyncState, Filing
 from app.security import require_admin
 from app.services.dart_service import DartCollectionService
+from app.services.industry_service import sync_industry_batch
 
 router = APIRouter(prefix="/dart", tags=["DART"])
 
@@ -107,3 +108,9 @@ def list_stored_filings(company_id: Optional[int] = None, limit: int = 100,
         "raw_ref": row.raw_ref,
         "parser_version": row.parser_version,
     } for row in rows]}
+
+@router.post("/industries/sync", dependencies=[Depends(require_admin)])
+def sync_industries(after_id: int = 0, batch_size: int = 25, db: Session = Depends(get_db)):
+    if after_id < 0 or batch_size < 1 or batch_size > 100:
+        raise HTTPException(status_code=400, detail="after_id or batch_size is out of range")
+    return sync_industry_batch(db, DartAdapter(settings.DART_API_KEY), after_id, batch_size)

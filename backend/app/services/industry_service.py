@@ -97,3 +97,27 @@ def sync_company_industry(db: Session, adapter: DartAdapter, company: Company) -
     company.industry_id = industry_id
     db.commit()
     return {"industry_code": code, "industry_id": industry_id}
+
+def sync_industry_batch(db: Session, adapter: DartAdapter, after_id: int = 0, batch_size: int = 25):
+    companies = db.query(Company).filter(
+        Company.id > after_id,
+        Company.corp_code.isnot(None),
+        Company.industry_id.is_(None),
+    ).order_by(Company.id).limit(batch_size).all()
+    updated = 0
+    failures = []
+    for company in companies:
+        try:
+            profile = adapter.company_profile(company.corp_code)
+            company.industry_id = classify_industry(profile.get("induty_code"))
+            updated += 1
+        except Exception as exc:
+            failures.append({"company_id": company.id, "error": str(exc)})
+    db.commit()
+    next_after_id = companies[-1].id if companies else None
+    remaining = db.query(Company).filter(
+        Company.corp_code.isnot(None), Company.industry_id.is_(None)
+    ).count()
+    return {"processed": len(companies), "updated": updated, "failures": failures,
+            "next_after_id": next_after_id, "remaining": remaining,
+            "has_more": bool(companies) and remaining > 0}

@@ -399,3 +399,23 @@ class GlobalEvent(Base):
     raw_hash = Column(String(64), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class EventImpactCandidate(Base):
+    __tablename__ = "event_impact_candidate"
+    __table_args__ = (
+        Index("uq_event_impact_candidate", "event_id", "security_id", "version", unique=True),
+        Index("ix_event_impact_rank", "event_id", "version", "rank"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(Integer, ForeignKey("global_event.id"), nullable=False, index=True)
+    security_id = Column(Integer, ForeignKey("security.id"), nullable=False, index=True)
+    industry_id = Column(String(50), nullable=False, index=True)
+    exposure = Column(Float, nullable=False)
+    impact_score = Column(Float, nullable=False)
+    confidence = Column(Float, nullable=False)
+    rank = Column(Integer, nullable=False)
+    explanation = Column(JSON, nullable=False)
+    version = Column(String(30), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
 from app.models.schema import Company, DailyPrice, EventImpactCandidate, GlobalEvent, Security
-from app.services.event_impact_service import EventImpactService
+from app.services.event_impact_service import EventImpactService, EventImpactV2Service
 from app.services.industry_service import sync_industry_batch
 
 engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -70,4 +70,53 @@ def test_industry_batch_uses_cursor_and_classifies():
     second = sync_industry_batch(db, MockDartAdapter(), after_id=first["next_after_id"], batch_size=1)
     assert first["updated"] == 1 and second["updated"] == 1
     assert {row.industry_id for row in db.query(Company).all()} == {"SEMICONDUCTORS_ELECTRONICS", "SOFTWARE_IT"}
+    db.close()
+
+def test_v2_uses_only_prior_events_and_pre_event_prices():
+    db = Session()
+    company = Company(name="Sensitive", corp_code="99999999", industry_id="SEMICONDUCTORS_ELECTRONICS")
+    db.add(company)
+    db.flush()
+    security = Security(company_id=company.id, market="KOSPI", ticker="999999", security_type="COMMON")
+    db.add(security)
+    db.flush()
+    for trade_date, close in [
+        (date(2025, 1, 1), "100"), (date(2025, 1, 3), "110"),
+        (date(2025, 1, 9), "110"), (date(2025, 1, 10), "121"),
+        (date(2025, 2, 9), "121"), (date(2025, 2, 10), "999"),
+    ]:
+        db.add(DailyPrice(security_id=security.id, trade_date=trade_date,
+                          close=Decimal(close), adjusted_close=Decimal(close)))
+    events = [
+        GlobalEvent(external_id="prior-1", source="TEST", origin_country="US",
+                    event_kind="MARKET_SHOCK", symbol="^SOX", title="prior 1",
+                    direction="POSITIVE", occurred_at=datetime(2025, 1, 2),
+                    available_at=datetime(2025, 1, 3), shock_score=70,
+                    event_metadata={}, raw_hash="1" * 64),
+        GlobalEvent(external_id="prior-2", source="TEST", origin_country="US",
+                    event_kind="MARKET_SHOCK", symbol="^SOX", title="prior 2",
+                    direction="POSITIVE", occurred_at=datetime(2025, 1, 9),
+                    available_at=datetime(2025, 1, 10), shock_score=70,
+                    event_metadata={}, raw_hash="2" * 64),
+        GlobalEvent(external_id="target", source="TEST", origin_country="US",
+                    event_kind="MARKET_SHOCK", symbol="^SOX", title="target",
+                    direction="POSITIVE", occurred_at=datetime(2025, 2, 9),
+                    available_at=datetime(2025, 2, 10), shock_score=80,
+                    event_metadata={}, raw_hash="3" * 64),
+        GlobalEvent(external_id="future", source="TEST", origin_country="US",
+                    event_kind="MARKET_SHOCK", symbol="^SOX", title="future",
+                    direction="POSITIVE", occurred_at=datetime(2025, 2, 19),
+                    available_at=datetime(2025, 2, 20), shock_score=80,
+                    event_metadata={}, raw_hash="4" * 64),
+    ]
+    db.add_all(events)
+    db.commit()
+    result = EventImpactV2Service().generate(db, events[2].id)
+    row = db.query(EventImpactCandidate).filter_by(version="impact-v2").one()
+    sensitivity = row.explanation["historical_sensitivity"]
+    assert result["historical_event_count"] == 2
+    assert sensitivity["sample_count"] == 2
+    assert sensitivity["aligned_mean_return"] == pytest.approx(0.1)
+    assert row.explanation["price_trade_date"] == "2025-02-09"
+    assert row.explanation["no_lookahead_cutoff"] == "2025-02-10T00:00:00"
     db.close()

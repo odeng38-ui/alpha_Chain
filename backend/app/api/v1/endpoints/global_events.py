@@ -7,7 +7,7 @@ from app.adapters.us_market_adapter import YahooUSMarketAdapter
 from app.db.session import get_db
 from app.models.schema import Company, EventImpactCandidate, GlobalEvent, Security
 from app.security import require_admin
-from app.services.event_impact_service import EventImpactService
+from app.services.event_impact_service import EventImpactService, EventImpactV2Service
 from app.services.us_market_event_service import USMarketEventService
 
 router = APIRouter(prefix="/global-events", tags=["Global Events"])
@@ -43,13 +43,21 @@ def generate_impact_candidates(event_id: int, limit: int = Query(100, ge=1, le=5
     return EventImpactService().generate(db, event_id, limit)
 
 
+@router.post("/{event_id}/impact-candidates/generate-v2", dependencies=[Depends(require_admin)])
+def generate_impact_candidates_v2(event_id: int, limit: int = Query(100, ge=1, le=500),
+                                  db: Session = Depends(get_db)):
+    return EventImpactV2Service().generate(db, event_id, limit)
+
+
 @router.get("/{event_id}/impact-candidates")
-def list_impact_candidates(event_id: int, limit: int = Query(100, ge=1, le=500),
+def list_impact_candidates(event_id: int, version: str = "impact-v2",
+                           limit: int = Query(100, ge=1, le=500),
                            db: Session = Depends(get_db)):
     rows = db.query(EventImpactCandidate, Security, Company).join(
         Security, Security.id == EventImpactCandidate.security_id
     ).join(Company, Company.id == Security.company_id).filter(
-        EventImpactCandidate.event_id == event_id
+        EventImpactCandidate.event_id == event_id,
+        EventImpactCandidate.version == version,
     ).order_by(EventImpactCandidate.rank).limit(limit).all()
     return {"event_id": event_id, "count": len(rows), "data": [{
         "rank": candidate.rank, "security_id": security.id, "ticker": security.ticker,

@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -104,20 +105,36 @@ def sync_industry_batch(db: Session, adapter: DartAdapter, after_id: int = 0, ba
         Company.corp_code.isnot(None),
         Company.industry_id.is_(None),
     ).order_by(Company.id).limit(batch_size).all()
-    updated = 0
+    profiles = {}
     failures = []
+
+    def fetch(company_id: int, corp_code: str):
+        return company_id, adapter.company_profile(corp_code)
+
+    workers = min(8, len(companies)) or 1
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(fetch, company.id, company.corp_code): company.id
+            for company in companies
+        }
+        for future in as_completed(futures):
+            company_id = futures[future]
+            try:
+                _, profile = future.result()
+                profiles[company_id] = profile
+            except Exception as exc:
+                failures.append({"company_id": company_id, "error": str(exc)})
+
     for company in companies:
-        try:
-            profile = adapter.company_profile(company.corp_code)
+        profile = profiles.get(company.id)
+        if profile is not None:
             company.industry_id = classify_industry(profile.get("induty_code"))
-            updated += 1
-        except Exception as exc:
-            failures.append({"company_id": company.id, "error": str(exc)})
     db.commit()
     next_after_id = companies[-1].id if companies else None
     remaining = db.query(Company).filter(
         Company.corp_code.isnot(None), Company.industry_id.is_(None)
     ).count()
-    return {"processed": len(companies), "updated": updated, "failures": failures,
+    failures.sort(key=lambda item: item["company_id"])
+    return {"processed": len(companies), "updated": len(profiles), "failures": failures,
             "next_after_id": next_after_id, "remaining": remaining,
             "has_more": bool(companies) and remaining > 0}

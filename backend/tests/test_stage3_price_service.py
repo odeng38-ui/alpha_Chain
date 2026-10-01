@@ -4,7 +4,7 @@
 MockAdapter를 사용하여 실제 KRX 호출 없이 로직을 검증한다.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 import pytest
@@ -330,3 +330,59 @@ def test_due_batch_skips_security_already_successful_today(db):
     assert result["security_ids"] == [due.id]
     assert result["processed"] == 1
     assert result["has_more"] is False
+
+def test_due_batch_skips_recent_failure_and_advances_to_unattempted(db, monkeypatch):
+    failed = create_test_security(db, ticker="000010")
+    company = Company(name="Unattempted", corp_code="22334455", status="ACTIVE")
+    db.add(company)
+    db.flush()
+    unattempted = Security(
+        company_id=company.id,
+        market="KOSPI",
+        ticker="005930",
+        security_type="COMMON",
+    )
+    db.add(unattempted)
+    db.flush()
+    db.add(
+        CollectionCheckpoint(
+            job_name="daily_price",
+            security_id=failed.id,
+            status="FAILED",
+            last_error="not found",
+            updated_at=datetime.utcnow(),
+        )
+    )
+    db.commit()
+    monkeypatch.setattr(price_service.settings, "PRICE_FAILURE_RETRY_DAYS", 7)
+
+    result = price_service.incremental_due_batch_update(
+        db,
+        batch_size=1,
+        adapter=MockAdapter([]),
+    )
+
+    assert result["security_ids"] == [unattempted.id]
+
+
+def test_due_batch_retries_failure_after_cooldown(db, monkeypatch):
+    failed = create_test_security(db, ticker="000010")
+    db.add(
+        CollectionCheckpoint(
+            job_name="daily_price",
+            security_id=failed.id,
+            status="FAILED",
+            last_error="not found",
+            updated_at=datetime.utcnow() - timedelta(days=8),
+        )
+    )
+    db.commit()
+    monkeypatch.setattr(price_service.settings, "PRICE_FAILURE_RETRY_DAYS", 7)
+
+    result = price_service.incremental_due_batch_update(
+        db,
+        batch_size=1,
+        adapter=MockAdapter([]),
+    )
+
+    assert result["security_ids"] == [failed.id]

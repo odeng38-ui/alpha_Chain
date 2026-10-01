@@ -9,7 +9,7 @@ PriceService — 백필(backfill) 및 증분(incremental) 주가 수집 오케�
 
 import logging
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_, func, or_
@@ -377,6 +377,7 @@ def incremental_due_batch_update(
 ) -> Dict[str, Any]:
     """Process active securities not successfully collected today."""
     today = date.today()
+    retry_before = datetime.utcnow() - timedelta(days=settings.PRICE_FAILURE_RETRY_DAYS)
     query = db.query(Security.id).outerjoin(
         CollectionCheckpoint,
         and_(
@@ -388,9 +389,18 @@ def incremental_due_batch_update(
         Security.effective_to.is_(None),
         or_(
             CollectionCheckpoint.security_id.is_(None),
-            CollectionCheckpoint.status != "SUCCESS",
-            CollectionCheckpoint.last_success_date.is_(None),
-            CollectionCheckpoint.last_success_date < today,
+            and_(
+                CollectionCheckpoint.status == "SUCCESS",
+                or_(
+                    CollectionCheckpoint.last_success_date.is_(None),
+                    CollectionCheckpoint.last_success_date < today,
+                ),
+            ),
+            and_(
+                CollectionCheckpoint.status == "FAILED",
+                CollectionCheckpoint.updated_at < retry_before,
+            ),
+            CollectionCheckpoint.status.notin_(("SUCCESS", "FAILED")),
         ),
     )
     total_candidates = query.count()

@@ -48,3 +48,12 @@ def test_price_initial_lookback_accepts_environment_override(monkeypatch):
     settings = Settings()
 
     assert settings.PRICE_INITIAL_LOOKBACK_DAYS == 14
+
+def test_price_collection_defaults_are_serverless_safe(monkeypatch):
+    monkeypatch.delenv("CRON_BATCH_SIZE", raising=False)
+    monkeypatch.delenv("PRICE_FAILURE_RETRY_DAYS", raising=False)
+
+    settings = Settings()
+
+    assert settings.CRON_BATCH_SIZE == 100
+    assert settings.PRICE_FAILURE_RETRY_DAYS == 7

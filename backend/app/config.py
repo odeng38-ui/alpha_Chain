@@ -28,8 +28,9 @@ class Settings(BaseSettings):
     DART_RAW_DIR: str = os.getenv("DART_RAW_DIR", "./data/dart")
     ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "")
     CRON_SECRET: str = os.getenv("CRON_SECRET", "")
-    CRON_BATCH_SIZE: int = int(os.getenv("CRON_BATCH_SIZE", "20"))
+    CRON_BATCH_SIZE: int = int(os.getenv("CRON_BATCH_SIZE", "100"))
     PRICE_INITIAL_LOOKBACK_DAYS: int = int(os.getenv("PRICE_INITIAL_LOOKBACK_DAYS", "30"))
+    PRICE_FAILURE_RETRY_DAYS: int = int(os.getenv("PRICE_FAILURE_RETRY_DAYS", "7"))
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000")
     DOCS_ENABLED: bool = os.getenv("DOCS_ENABLED", "true").lower() == "true"
     SCHEDULER_ENABLED: bool = os.getenv("SCHEDULER_ENABLED", "true").lower() == "true"

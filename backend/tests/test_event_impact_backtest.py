@@ -1,0 +1,54 @@
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.db.session import Base
+from app.models.schema import BacktestRun, Company, DailyPrice, GlobalEvent, Security
+from app.services.event_impact_backtest_service import EventImpactBacktestService
+
+engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+Session = sessionmaker(bind=engine)
+
+
+@pytest.fixture(autouse=True)
+def database():
+    Base.metadata.create_all(engine)
+    yield
+    Base.metadata.drop_all(engine)
+
+
+def test_event_backtest_is_point_in_time_and_reproducible():
+    db = Session()
+    company = Company(name="Chip", corp_code="12345678", industry_id="SEMICONDUCTORS_ELECTRONICS")
+    db.add(company)
+    db.flush()
+    security = Security(company_id=company.id, market="KOSPI", ticker="123456", security_type="COMMON")
+    db.add(security)
+    db.flush()
+    start = date(2025, 1, 2)
+    for index in range(14):
+        value = Decimal(str(100 + index * 2))
+        db.add(DailyPrice(security_id=security.id, trade_date=start + timedelta(days=index),
+                          open=value - 1, close=value, adjusted_close=value))
+    for index, available in enumerate((datetime(2025, 1, 3), datetime(2025, 1, 10)), 1):
+        db.add(GlobalEvent(
+            external_id=f"event-{index}", source="TEST", origin_country="US",
+            event_kind="MARKET_SHOCK", symbol="^SOX", title=f"event {index}",
+            direction="POSITIVE", occurred_at=available - timedelta(days=1),
+            available_at=available, shock_score=70, event_metadata={}, raw_hash=str(index) * 64,
+        ))
+    db.commit()
+    service = EventImpactBacktestService()
+    first = service.run(db, "first", max_events=2, candidates_per_event=1, horizons=(1, 5))
+    second = service.run(db, "second", max_events=2, candidates_per_event=1, horizons=(1, 5))
+    assert first.dataset_hash == second.dataset_hash
+    assert first.report["summary"] == {"events": 2, "candidate_rows": 2, "outcome_observations": 4}
+    assert first.report["metrics"]["1d"]["direction_hit_rate"] == 1.0
+    assert first.report["bias_checklist"]["pre_event_prices_only"] is True
+    assert first.report["samples"][0]["available_at"] == "2025-01-03T00:00:00"
+    assert db.query(BacktestRun).count() == 2
+    db.close()

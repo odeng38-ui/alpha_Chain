@@ -11,6 +11,7 @@ from app.services.event_impact_service import (
     EventImpactService,
     EventImpactV2Service,
     EventImpactV3Service,
+    EventImpactV4Service,
 )
 from app.services.us_market_event_service import USMarketEventService
 
@@ -58,8 +59,14 @@ def generate_impact_candidates_v3(event_id: int, limit: int = Query(100, ge=1, l
                                   db: Session = Depends(get_db)):
     return EventImpactV3Service().generate(db, event_id, limit)
 
+@router.post("/{event_id}/impact-candidates/generate-v4", dependencies=[Depends(require_admin)])
+def generate_impact_candidates_v4(event_id: int, horizon: int = Query(1),
+                                  limit: int = Query(100, ge=1, le=500),
+                                  db: Session = Depends(get_db)):
+    return EventImpactV4Service(horizon).generate(db, event_id, limit)
+
 @router.get("/{event_id}/impact-candidates")
-def list_impact_candidates(event_id: int, version: str = "impact-v3",
+def list_impact_candidates(event_id: int, version: str = "impact-v4-1d",
                            limit: int = Query(100, ge=1, le=500),
                            db: Session = Depends(get_db)):
     rows = db.query(EventImpactCandidate, Security, Company).join(

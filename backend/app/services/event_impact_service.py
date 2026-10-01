@@ -343,3 +343,146 @@ class EventImpactV3Service(EventImpactV2Service):
                 "historical_event_count": v2_result["historical_event_count"],
                 "eligible": len(ranked), "created": created,
                 "updated": updated, "count": len(selected)}
+
+class EventImpactV4Service(EventImpactService):
+    def __init__(self, horizon: int):
+        if horizon not in {1, 5}:
+            raise ValueError("impact-v4 horizon must be 1 or 5")
+        self.horizon = horizon
+        self.version = f"impact-v4-{horizon}d"
+
+    def generate(self, db: Session, event_id: int, limit: int = 100):
+        event = db.get(GlobalEvent, event_id)
+        if event is None:
+            raise LookupError("global event not found")
+        exposure_map = SYMBOL_INDUSTRY_EXPOSURE.get(event.symbol or "", {})
+        if not exposure_map:
+            raise ValueError("event symbol has no industry exposure map")
+        historical = db.query(GlobalEvent).filter(
+            GlobalEvent.symbol == event.symbol,
+            GlobalEvent.direction == event.direction,
+            GlobalEvent.available_at < event.available_at,
+        ).order_by(GlobalEvent.available_at).all()
+        earliest = min((item.available_at.date() for item in historical),
+                       default=event.available_at.date()) - timedelta(days=10)
+        securities = db.query(Security).join(Security.company).filter(
+            Security.security_type == "COMMON", Security.effective_to.is_(None),
+            Company.industry_id.in_(list(exposure_map)),
+        ).all()
+        ids = [item.id for item in securities]
+        price_rows = db.query(DailyPrice).filter(
+            DailyPrice.security_id.in_(ids), DailyPrice.trade_date >= earliest,
+            DailyPrice.trade_date < event.available_at.date(),
+        ).order_by(DailyPrice.security_id, DailyPrice.trade_date).all() if ids else []
+        prices_by_security = defaultdict(list)
+        for price in price_rows:
+            prices_by_security[price.security_id].append(price)
+
+        sensitivity_by_security = {}
+        turnovers = {}
+        for security in securities:
+            prices = prices_by_security[security.id]
+            if not prices:
+                continue
+            latest = prices[-1]
+            turnovers[security.id] = float(
+                (latest.adjusted_close or latest.close or 0) * (latest.volume or 0)
+            )
+            observations = []
+            for prior_event in historical:
+                entry_index = next((index for index, price in enumerate(prices)
+                                    if price.trade_date >= prior_event.available_at.date()), None)
+                exit_index = entry_index + self.horizon - 1 if entry_index is not None else None
+                if entry_index is None or exit_index is None or exit_index >= len(prices):
+                    continue
+                entry = prices[entry_index]
+                exit_row = prices[exit_index]
+                entry_open = float(entry.open or 0)
+                exit_close = float(exit_row.adjusted_close or exit_row.close or 0)
+                if entry_open <= 0 or exit_close <= 0:
+                    continue
+                aligned = (exit_close / entry_open - 1.0) * (
+                    1.0 if prior_event.direction == "POSITIVE" else -1.0
+                )
+                similarity = max(0.1, 1.0 - abs(
+                    float(prior_event.shock_score) - float(event.shock_score)
+                ) / 100.0)
+                observations.append((aligned, similarity))
+            if observations:
+                weight_sum = sum(weight for _, weight in observations)
+                weighted_mean = sum(value * weight for value, weight in observations) / weight_sum
+                consistency = sum(value > 0 for value, _ in observations) / len(observations)
+            else:
+                weighted_mean, consistency = 0.0, 0.5
+            sensitivity_by_security[security.id] = {
+                "sample_count": len(observations),
+                "weighted_open_to_close_return": round(weighted_mean, 8),
+                "direction_consistency": round(consistency, 6),
+            }
+        market_median = median(
+            item["weighted_open_to_close_return"]
+            for item in sensitivity_by_security.values()
+        ) if sensitivity_by_security else 0.0
+        ordered_turnovers = sorted(turnovers.values())
+        ranked = []
+        for security in securities:
+            sensitivity = sensitivity_by_security.get(security.id)
+            prices = prices_by_security[security.id]
+            if sensitivity is None or not prices:
+                continue
+            abnormal = sensitivity["weighted_open_to_close_return"] - market_median
+            abnormal_score = max(0.0, min(100.0, 50.0 + abnormal / 0.05 * 50.0))
+            turnover = turnovers.get(security.id, 0.0)
+            liquidity = (sum(value <= turnover for value in ordered_turnovers)
+                         / len(ordered_turnovers)) if ordered_turnovers else 0.0
+            exposure = exposure_map[security.company.industry_id]
+            reliability = min(1.0, sensitivity["sample_count"] / 8.0)
+            confidence = round(0.30 * exposure + 0.30 * reliability
+                               + 0.25 * sensitivity["direction_consistency"]
+                               + 0.15 * liquidity, 6)
+            magnitude = min(100.0, float(event.shock_score) * exposure
+                            * (0.70 + 0.60 * abnormal_score / 100.0)
+                            * (0.90 + 0.10 * liquidity))
+            score = round(magnitude if event.direction == "POSITIVE" else -magnitude, 4)
+            ranked.append((abs(score) * (0.65 + 0.35 * confidence), security,
+                           score, confidence, exposure, liquidity, turnover,
+                           abnormal, abnormal_score, sensitivity, prices[-1]))
+        ranked.sort(key=lambda item: (-item[0], item[1].id))
+        selected = ranked[:limit]
+        existing = {row.security_id: row for row in db.query(EventImpactCandidate).filter(
+            EventImpactCandidate.event_id == event_id,
+            EventImpactCandidate.version == self.version,
+            EventImpactCandidate.security_id.in_([item[1].id for item in selected]),
+        ).all()} if selected else {}
+        created = updated = 0
+        for rank, (_, security, score, confidence, exposure, liquidity, turnover,
+                   abnormal, abnormal_score, sensitivity, latest) in enumerate(selected, 1):
+            row = existing.get(security.id)
+            if row is None:
+                row = EventImpactCandidate(event_id=event_id, security_id=security.id,
+                                           version=self.version)
+                db.add(row)
+                created += 1
+            else:
+                updated += 1
+            row.industry_id, row.exposure = security.company.industry_id, exposure
+            row.impact_score, row.confidence, row.rank = score, confidence, rank
+            row.explanation = {
+                "event_symbol": event.symbol, "event_direction": event.direction,
+                "event_shock_score": event.shock_score, "industry_exposure": exposure,
+                "price_trade_date": latest.trade_date.isoformat(),
+                "historical_sensitivity": sensitivity,
+                "market_adjustment": {"universe_median_return": round(market_median, 8),
+                                      "abnormal_return": round(abnormal, 8),
+                                      "abnormal_score": round(abnormal_score, 4)},
+                "liquidity": {"turnover_proxy": round(turnover, 2),
+                              "percentile": round(liquidity, 6)},
+                "training_horizon": f"{self.horizon}d",
+                "entry_basis": "reaction_session_open",
+                "no_lookahead_cutoff": event.available_at.isoformat(),
+                "formula": "signed(shock * exposure * open_to_horizon_abnormal * liquidity)",
+            }
+        db.commit()
+        return {"event_id": event_id, "version": self.version,
+                "historical_event_count": len(historical), "eligible": len(ranked),
+                "created": created, "updated": updated, "count": len(selected)}

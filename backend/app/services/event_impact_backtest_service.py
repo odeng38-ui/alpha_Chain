@@ -6,14 +6,18 @@ from statistics import mean
 from sqlalchemy.orm import Session
 
 from app.models.schema import BacktestRun, DailyPrice, EventImpactCandidate, GlobalEvent, Security
-from app.services.event_impact_service import EventImpactV2Service, EventImpactV3Service
+from app.services.event_impact_service import (
+    EventImpactV2Service,
+    EventImpactV3Service,
+    EventImpactV4Service,
+)
 
 
 class EventImpactBacktestService:
     version = "impact-v2"
 
     def __init__(self, version: str = "impact-v2"):
-        if version not in {"impact-v2", "impact-v3"}:
+        if version not in {"impact-v2", "impact-v3", "impact-v4"}:
             raise ValueError("unsupported event impact version")
         self.version = version
 
@@ -66,36 +70,45 @@ class EventImpactBacktestService:
         events.reverse()
         samples = []
         generator = EventImpactV3Service() if self.version == "impact-v3" else EventImpactV2Service()
+        if self.version == "impact-v4":
+            generator = None
         for event in events:
-            generator.generate(db, event.id, candidates_per_event)
-            candidates = db.query(EventImpactCandidate).filter_by(
-                event_id=event.id, version=self.version,
-            ).order_by(EventImpactCandidate.rank).limit(candidates_per_event).all()
-            for candidate in candidates:
-                security = db.get(Security, candidate.security_id)
-                sample = {
-                    "event_id": event.id, "event_symbol": event.symbol,
-                    "event_direction": event.direction,
-                    "available_at": event.available_at.isoformat(),
-                    "security_id": candidate.security_id,
-                    "ticker": security.ticker, "rank": candidate.rank,
-                    "impact_score": candidate.impact_score,
-                    "confidence": candidate.confidence,
-                    "historical_sample_count": candidate.explanation[
+            event_horizons = horizons if self.version == "impact-v4" else (None,)
+            for model_horizon in event_horizons:
+                candidate_version = self.version
+                if model_horizon is not None:
+                    generator = EventImpactV4Service(model_horizon)
+                    candidate_version = generator.version
+                generator.generate(db, event.id, candidates_per_event)
+                candidates = db.query(EventImpactCandidate).filter_by(
+                    event_id=event.id, version=candidate_version,
+                ).order_by(EventImpactCandidate.rank).limit(candidates_per_event).all()
+                for candidate in candidates:
+                    security = db.get(Security, candidate.security_id)
+                    sample = {
+                        "event_id": event.id, "event_symbol": event.symbol,
+                        "event_direction": event.direction,
+                        "available_at": event.available_at.isoformat(),
+                        "security_id": candidate.security_id,
+                        "ticker": security.ticker, "rank": candidate.rank,
+                        "impact_score": candidate.impact_score,
+                        "confidence": candidate.confidence,
+                        "historical_sample_count": candidate.explanation[
                         "historical_sensitivity"
-                    ]["sample_count"],
-                    "outcomes": {},
-                }
-                for horizon in horizons:
-                    sample["outcomes"][f"{horizon}d"] = self._outcome(
-                        db, event, candidate, horizon,
-                    )
-                samples.append(sample)
+                        ]["sample_count"],
+                        "outcomes": {},
+                    }
+                    selected_horizons = (model_horizon,) if model_horizon else horizons
+                    for horizon in selected_horizons:
+                        sample["outcomes"][f"{horizon}d"] = self._outcome(
+                            db, event, candidate, horizon,
+                        )
+                    samples.append(sample)
         metrics = {}
         for horizon in horizons:
             key = f"{horizon}d"
-            rows = [sample["outcomes"][key] for sample in samples
-                    if sample["outcomes"][key] is not None]
+            rows = [sample["outcomes"].get(key) for sample in samples
+                    if sample["outcomes"].get(key) is not None]
             metrics[key] = self._metrics(rows)
         frozen = {"version": self.version, "events": [event.external_id for event in events],
                   "horizons": list(horizons), "candidates_per_event": candidates_per_event,

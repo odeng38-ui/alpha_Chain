@@ -52,7 +52,7 @@ class EventImpactBacktestRequest(BaseModel):
     max_events: int = Field(default=10, ge=1, le=50)
     candidates_per_event: int = Field(default=20, ge=1, le=100)
     horizons: list[int] = Field(default_factory=lambda: [1, 5])
-    version: str = "impact-v3"
+    version: str = "impact-v4"
 
 
 @router.post("/event-impact", dependencies=[Depends(require_admin)])
@@ -60,7 +60,7 @@ def run_event_impact_backtest(req: EventImpactBacktestRequest,
                               db: Session = Depends(get_db)):
     if not req.horizons or any(item < 1 or item > 20 for item in req.horizons):
         raise HTTPException(status_code=422, detail="horizons must be between 1 and 20")
-    if req.version not in {"impact-v2", "impact-v3"}:
+    if req.version not in {"impact-v2", "impact-v3", "impact-v4"}:
         raise HTTPException(status_code=422, detail="unsupported event impact version")
     row = EventImpactBacktestService(req.version).run(
         db, req.name, req.start, req.end, req.max_events,

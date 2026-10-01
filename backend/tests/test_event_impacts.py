@@ -12,6 +12,7 @@ from app.services.event_impact_service import (
     EventImpactService,
     EventImpactV2Service,
     EventImpactV3Service,
+    EventImpactV4Service,
 )
 from app.services.industry_service import sync_industry_batch
 
@@ -162,4 +163,42 @@ def test_v3_removes_market_effect_and_uses_liquidity():
     assert rows[0].explanation["market_adjustment"]["abnormal_aligned_return"] > 0
     assert rows[1].explanation["market_adjustment"]["abnormal_aligned_return"] < 0
     assert rows[1].explanation["liquidity"]["percentile"] == 1.0
+    db.close()
+
+def test_v4_learns_post_open_return_instead_of_overnight_gap():
+    db = Session()
+    company = Company(name="V4", corp_code="77777777", industry_id="SEMICONDUCTORS_ELECTRONICS")
+    db.add(company)
+    db.flush()
+    security = Security(company_id=company.id, market="KOSPI", ticker="777777", security_type="COMMON")
+    db.add(security)
+    db.flush()
+    prices = [
+        (date(2025, 1, 2), "100", "100"),
+        (date(2025, 1, 3), "110", "111"),
+        (date(2025, 2, 9), "111", "111"),
+    ]
+    for trade_date, open_value, close_value in prices:
+        db.add(DailyPrice(security_id=security.id, trade_date=trade_date,
+                          open=Decimal(open_value), close=Decimal(close_value),
+                          adjusted_close=Decimal(close_value), volume=1000))
+    prior = GlobalEvent(external_id="v4-prior", source="TEST", origin_country="US",
+                        event_kind="MARKET_SHOCK", symbol="^SOX", title="prior",
+                        direction="POSITIVE", occurred_at=datetime(2025, 1, 2),
+                        available_at=datetime(2025, 1, 3), shock_score=70,
+                        event_metadata={}, raw_hash="7" * 64)
+    target = GlobalEvent(external_id="v4-target", source="TEST", origin_country="US",
+                         event_kind="MARKET_SHOCK", symbol="^SOX", title="target",
+                         direction="POSITIVE", occurred_at=datetime(2025, 2, 9),
+                         available_at=datetime(2025, 2, 10), shock_score=70,
+                         event_metadata={}, raw_hash="8" * 64)
+    db.add_all([prior, target])
+    db.commit()
+    EventImpactV4Service(1).generate(db, target.id, 1)
+    row = db.query(EventImpactCandidate).filter_by(version="impact-v4-1d").one()
+    learned = row.explanation["historical_sensitivity"]["weighted_open_to_close_return"]
+    assert learned == pytest.approx(111 / 110 - 1)
+    assert learned < 0.01
+    assert row.explanation["entry_basis"] == "reaction_session_open"
+    assert row.explanation["training_horizon"] == "1d"
     db.close()

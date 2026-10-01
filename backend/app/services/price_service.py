@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.adapters.base import AdapterError, BrokerAdapter
 from app.adapters.pykrx_adapter import PykrxAdapter
 from app.adapters.yahoo_adapter import YahooFinanceAdapter
+from app.config import settings
 from app.models.schema import CollectionCheckpoint, DailyPrice, Security
 
 logger = logging.getLogger(__name__)
@@ -37,40 +38,40 @@ def get_default_adapter() -> BrokerAdapter:
 # 내부 헬퍼                                                             #
 # ------------------------------------------------------------------ #
 
-def _upsert_price_record(db: Session, security_id: int, record) -> bool:
-    """
-    DailyPrice 단건 UPSERT.
-    (security_id, trade_date) PK 충돌 시 무시(기존 데이터 보존).
-
-    Returns:
-        True if inserted, False if skipped (already exists)
-    """
-    existing = db.query(DailyPrice).filter(
-        DailyPrice.security_id == security_id,
-        DailyPrice.trade_date == record.trade_date,
-    ).first()
-
-    if existing:
-        return False  # 이미 존재 → 스킵
-
-    price = DailyPrice(
-        security_id=security_id,
-        trade_date=record.trade_date,
-        open=record.open,
-        high=record.high,
-        low=record.low,
-        close=record.close,
-        volume=record.volume,
-        value=record.value,
-        adjusted_close=record.adjusted_close,
-    )
-
-    # raw_hash 필드가 있으면 설정
-    if hasattr(DailyPrice, 'raw_hash') and record.raw_hash:
-        price.raw_hash = record.raw_hash
-
-    db.add(price)
-    return True
+def _store_price_records(db: Session, security_id: int, records) -> tuple[int, int]:
+    """Store a price batch using one duplicate lookup instead of one query per row."""
+    if not records:
+        return 0, 0
+    trade_dates = {record.trade_date for record in records}
+    existing_dates = {
+        row[0]
+        for row in db.query(DailyPrice.trade_date).filter(
+            DailyPrice.security_id == security_id,
+            DailyPrice.trade_date.in_(trade_dates),
+        ).all()
+    }
+    inserted = 0
+    seen_dates = set(existing_dates)
+    for record in records:
+        if record.trade_date in seen_dates:
+            continue
+        db.add(
+            DailyPrice(
+                security_id=security_id,
+                trade_date=record.trade_date,
+                open=record.open,
+                high=record.high,
+                low=record.low,
+                close=record.close,
+                volume=record.volume,
+                value=record.value,
+                adjusted_close=record.adjusted_close,
+                raw_hash=record.raw_hash,
+            )
+        )
+        seen_dates.add(record.trade_date)
+        inserted += 1
+    return inserted, len(records) - inserted
 
 
 def _get_last_trade_date(db: Session, security_id: int) -> Optional[date]:
@@ -164,15 +165,11 @@ def backfill_security(
                 market=security.market,
             )
 
-            for rec in records:
-                inserted = _upsert_price_record(db, security_id, rec)
-                if inserted:
-                    result.inserted += 1
-                    result.last_success_date = rec.trade_date
-                else:
-                    result.skipped += 1
-
-            db.commit()
+            inserted, skipped = _store_price_records(db, security_id, records)
+            result.inserted += inserted
+            result.skipped += skipped
+            if records:
+                result.last_success_date = records[-1].trade_date
             _save_checkpoint(db, security_id, "SUCCESS", current_end)
             db.commit()
             logger.info(
@@ -278,7 +275,7 @@ def incremental_update(
         last_date = _get_last_trade_date(db, sec.id)
         if last_date is None:
             # DB에 데이터 없음 → 승인 기준에 맞춰 최근 5년 백필
-            start = today - timedelta(days=365 * 5)
+            start = today - timedelta(days=settings.PRICE_INITIAL_LOOKBACK_DAYS)
         else:
             start = last_date + timedelta(days=1)
 
@@ -296,16 +293,7 @@ def incremental_update(
                 market=sec.market,
             )
 
-            inserted_count = 0
-            skipped_count = 0
-            for rec in records:
-                ins = _upsert_price_record(db, sec.id, rec)
-                if ins:
-                    inserted_count += 1
-                else:
-                    skipped_count += 1
-
-            db.commit()
+            inserted_count, skipped_count = _store_price_records(db, sec.id, records)
             _save_checkpoint(db, sec.id, "SUCCESS", today)
             db.commit()
             result.updated_securities += 1

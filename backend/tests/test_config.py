@@ -33,3 +33,18 @@ def test_scheduler_can_be_disabled_explicitly(monkeypatch):
     settings = Settings()
 
     assert settings.SCHEDULER_ENABLED is False
+
+def test_price_initial_lookback_defaults_to_thirty_days(monkeypatch):
+    monkeypatch.delenv("PRICE_INITIAL_LOOKBACK_DAYS", raising=False)
+
+    settings = Settings()
+
+    assert settings.PRICE_INITIAL_LOOKBACK_DAYS == 30
+
+
+def test_price_initial_lookback_accepts_environment_override(monkeypatch):
+    monkeypatch.setenv("PRICE_INITIAL_LOOKBACK_DAYS", "14")
+
+    settings = Settings()
+
+    assert settings.PRICE_INITIAL_LOOKBACK_DAYS == 14

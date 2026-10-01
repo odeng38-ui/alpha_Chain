@@ -71,12 +71,14 @@ class MockAdapter(BrokerAdapter):
 
     def __init__(self, records: List[OHLCVRecord] = None):
         self._records = records or []
+        self.calls = []
 
     @property
     def name(self) -> str:
         return "mock"
 
     def fetch_ohlcv(self, ticker, start_date, end_date, market="KOSPI") -> List[OHLCVRecord]:
+        self.calls.append((ticker, start_date, end_date, market))
         return [r for r in self._records if start_date <= r.trade_date <= end_date]
 
     def fetch_latest(self, ticker, market="KOSPI") -> Optional[OHLCVRecord]:
@@ -254,14 +256,19 @@ class TestIncrementalUpdate:
         assert result.total_inserted == 2
         assert result.errors == []
 
-    def test_incremental_no_data_fetches_recent_year(self, db):
-        """DB에 데이터가 없으면 최근 1년치를 시도한다."""
+    def test_incremental_no_data_uses_bounded_initial_lookback(self, db, monkeypatch):
         security = create_test_security(db)
-        adapter = MockAdapter([])  # 빈 응답 (실제로는 API 호출만 확인)
+        adapter = MockAdapter([])
+        monkeypatch.setattr(price_service.settings, "PRICE_INITIAL_LOOKBACK_DAYS", 30)
 
         result = price_service.incremental_update(db, [security.id], adapter)
-        assert result.updated_securities == 1  # 시도는 했음
+
+        assert result.updated_securities == 1
         assert result.total_inserted == 0
+        assert len(adapter.calls) == 1
+        _, start_date, end_date, _ = adapter.calls[0]
+        assert end_date == date.today()
+        assert start_date == date.today() - timedelta(days=30)
 
 class TestIncrementalBatchUpdate:
     def test_batch_is_bounded_and_returns_cursor(self, db):

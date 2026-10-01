@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import date, timedelta
+from statistics import median
 
 from sqlalchemy.orm import Session
 
@@ -236,5 +237,109 @@ class EventImpactV2Service(EventImpactService):
         db.commit()
         return {"event_id": event.id, "version": self.version,
                 "historical_event_count": len(historical_events),
+                "eligible": len(ranked), "created": created,
+                "updated": updated, "count": len(selected)}
+
+class EventImpactV3Service(EventImpactV2Service):
+    version = "impact-v3"
+
+    def generate(self, db: Session, event_id: int, limit: int = 100):
+        event = db.get(GlobalEvent, event_id)
+        if event is None:
+            raise LookupError("global event not found")
+        v2_result = EventImpactV2Service().generate(db, event_id, 500)
+        v2_rows = db.query(EventImpactCandidate).filter_by(
+            event_id=event_id, version="impact-v2",
+        ).all()
+        if not v2_rows:
+            return {"event_id": event_id, "version": self.version,
+                    "eligible": 0, "created": 0, "updated": 0, "count": 0}
+        market_median = median(
+            row.explanation["historical_sensitivity"]["aligned_mean_return"]
+            for row in v2_rows
+        )
+        security_ids = [row.security_id for row in v2_rows]
+        price_rows = db.query(DailyPrice).filter(
+            DailyPrice.security_id.in_(security_ids),
+            DailyPrice.trade_date < event.available_at.date(),
+        ).order_by(DailyPrice.security_id, DailyPrice.trade_date.desc()).all()
+        latest = {}
+        for price in price_rows:
+            latest.setdefault(price.security_id, price)
+        turnovers = {
+            security_id: float((price.adjusted_close or price.close or 0) * (price.volume or 0))
+            for security_id, price in latest.items()
+        }
+        ordered_turnovers = sorted(turnovers.values())
+
+        ranked = []
+        for row in v2_rows:
+            sensitivity = row.explanation["historical_sensitivity"]
+            abnormal = sensitivity["aligned_mean_return"] - market_median
+            abnormal_score = max(0.0, min(100.0, 50.0 + abnormal / 0.05 * 50.0))
+            turnover = turnovers.get(row.security_id, 0.0)
+            liquidity_percentile = (
+                sum(value <= turnover for value in ordered_turnovers) / len(ordered_turnovers)
+                if ordered_turnovers else 0.0
+            )
+            reliability = min(1.0, sensitivity["sample_count"] / 8.0)
+            confidence = round(
+                0.30 * row.exposure + 0.25 * reliability
+                + 0.25 * sensitivity["direction_consistency"]
+                + 0.20 * liquidity_percentile, 6,
+            )
+            magnitude = min(
+                100.0,
+                float(event.shock_score) * row.exposure
+                * (0.70 + 0.60 * abnormal_score / 100.0)
+                * (0.90 + 0.10 * liquidity_percentile),
+            )
+            signed_score = round(
+                magnitude if event.direction == "POSITIVE" else -magnitude, 4,
+            )
+            rank_score = abs(signed_score) * (0.65 + 0.35 * confidence)
+            ranked.append((rank_score, row, signed_score, confidence,
+                           abnormal, abnormal_score, turnover, liquidity_percentile))
+        ranked.sort(key=lambda item: (-item[0], item[1].security_id))
+        selected = ranked[:limit]
+        existing = {
+            row.security_id: row for row in db.query(EventImpactCandidate).filter(
+                EventImpactCandidate.event_id == event_id,
+                EventImpactCandidate.version == self.version,
+                EventImpactCandidate.security_id.in_([item[1].security_id for item in selected]),
+            ).all()
+        } if selected else {}
+        created = updated = 0
+        shock_regime = "HIGH" if event.shock_score >= 80 else "MEDIUM" if event.shock_score >= 60 else "LOW"
+        for rank, (_, source, score, confidence, abnormal, abnormal_score,
+                   turnover, liquidity) in enumerate(selected, 1):
+            row = existing.get(source.security_id)
+            if row is None:
+                row = EventImpactCandidate(event_id=event_id, security_id=source.security_id,
+                                           version=self.version)
+                db.add(row)
+                created += 1
+            else:
+                updated += 1
+            row.industry_id = source.industry_id
+            row.exposure = source.exposure
+            row.impact_score = score
+            row.confidence = confidence
+            row.rank = rank
+            row.explanation = {
+                **source.explanation,
+                "market_adjustment": {
+                    "universe_median_aligned_return": round(market_median, 8),
+                    "abnormal_aligned_return": round(abnormal, 8),
+                    "abnormal_score": round(abnormal_score, 4),
+                },
+                "liquidity": {"turnover_proxy": round(turnover, 2),
+                              "percentile": round(liquidity, 6)},
+                "shock_regime": shock_regime,
+                "formula": "signed(shock * exposure * abnormal_response * liquidity)",
+            }
+        db.commit()
+        return {"event_id": event_id, "version": self.version,
+                "historical_event_count": v2_result["historical_event_count"],
                 "eligible": len(ranked), "created": created,
                 "updated": updated, "count": len(selected)}

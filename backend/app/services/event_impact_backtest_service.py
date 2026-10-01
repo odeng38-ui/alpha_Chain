@@ -6,11 +6,16 @@ from statistics import mean
 from sqlalchemy.orm import Session
 
 from app.models.schema import BacktestRun, DailyPrice, EventImpactCandidate, GlobalEvent, Security
-from app.services.event_impact_service import EventImpactV2Service
+from app.services.event_impact_service import EventImpactV2Service, EventImpactV3Service
 
 
 class EventImpactBacktestService:
     version = "impact-v2"
+
+    def __init__(self, version: str = "impact-v2"):
+        if version not in {"impact-v2", "impact-v3"}:
+            raise ValueError("unsupported event impact version")
+        self.version = version
 
     @staticmethod
     def _outcome(db: Session, event, candidate, horizon: int):
@@ -60,7 +65,7 @@ class EventImpactBacktestService:
         events = query.order_by(GlobalEvent.available_at.desc()).limit(max_events).all()
         events.reverse()
         samples = []
-        generator = EventImpactV2Service()
+        generator = EventImpactV3Service() if self.version == "impact-v3" else EventImpactV2Service()
         for event in events:
             generator.generate(db, event.id, candidates_per_event)
             candidates = db.query(EventImpactCandidate).filter_by(

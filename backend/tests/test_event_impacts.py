@@ -8,7 +8,11 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
 from app.models.schema import Company, DailyPrice, EventImpactCandidate, GlobalEvent, Security
-from app.services.event_impact_service import EventImpactService, EventImpactV2Service
+from app.services.event_impact_service import (
+    EventImpactService,
+    EventImpactV2Service,
+    EventImpactV3Service,
+)
 from app.services.industry_service import sync_industry_batch
 
 engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -119,4 +123,43 @@ def test_v2_uses_only_prior_events_and_pre_event_prices():
     assert sensitivity["aligned_mean_return"] == pytest.approx(0.1)
     assert row.explanation["price_trade_date"] == "2025-02-09"
     assert row.explanation["no_lookahead_cutoff"] == "2025-02-10T00:00:00"
+    db.close()
+
+def test_v3_removes_market_effect_and_uses_liquidity():
+    db = Session()
+    securities = []
+    for index, industry in enumerate(("SEMICONDUCTORS_ELECTRONICS", "SEMICONDUCTORS_ELECTRONICS"), 1):
+        company = Company(name=f"V3-{index}", corp_code=f"{index:08d}", industry_id=industry)
+        db.add(company)
+        db.flush()
+        security = Security(company_id=company.id, market="KOSPI", ticker=f"{index:06d}", security_type="COMMON")
+        db.add(security)
+        db.flush()
+        securities.append(security)
+        closes = (Decimal("100"), Decimal("110")) if index == 1 else (Decimal("100"), Decimal("102"))
+        db.add(DailyPrice(security_id=security.id, trade_date=date(2025, 1, 2),
+                          close=closes[0], adjusted_close=closes[0], volume=1000 * index))
+        db.add(DailyPrice(security_id=security.id, trade_date=date(2025, 1, 3),
+                          close=closes[1], adjusted_close=closes[1], volume=1000 * index))
+        db.add(DailyPrice(security_id=security.id, trade_date=date(2025, 2, 9),
+                          close=closes[1], adjusted_close=closes[1], volume=1000 * index))
+    prior = GlobalEvent(external_id="v3-prior", source="TEST", origin_country="US",
+                        event_kind="MARKET_SHOCK", symbol="^SOX", title="prior",
+                        direction="POSITIVE", occurred_at=datetime(2025, 1, 2),
+                        available_at=datetime(2025, 1, 3), shock_score=70,
+                        event_metadata={}, raw_hash="5" * 64)
+    target = GlobalEvent(external_id="v3-target", source="TEST", origin_country="US",
+                         event_kind="MARKET_SHOCK", symbol="^SOX", title="target",
+                         direction="POSITIVE", occurred_at=datetime(2025, 2, 9),
+                         available_at=datetime(2025, 2, 10), shock_score=70,
+                         event_metadata={}, raw_hash="6" * 64)
+    db.add_all([prior, target])
+    db.commit()
+    result = EventImpactV3Service().generate(db, target.id, 2)
+    rows = db.query(EventImpactCandidate).filter_by(version="impact-v3").order_by(EventImpactCandidate.rank).all()
+    assert result["count"] == 2
+    assert rows[0].security_id == securities[0].id
+    assert rows[0].explanation["market_adjustment"]["abnormal_aligned_return"] > 0
+    assert rows[1].explanation["market_adjustment"]["abnormal_aligned_return"] < 0
+    assert rows[1].explanation["liquidity"]["percentile"] == 1.0
     db.close()

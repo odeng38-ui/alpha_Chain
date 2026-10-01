@@ -1,4 +1,4 @@
-﻿const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:8000';
+const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:8000';
 
 async function proxy(request: Request, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;
@@ -6,10 +6,15 @@ async function proxy(request: Request, context: { params: Promise<{ path: string
   const target = new URL(`/api/v1/${path.join('/')}`, BACKEND_URL);
   target.search = incoming.search;
   try {
+    const headers = new Headers({
+      'Content-Type': request.headers.get('Content-Type') ?? 'application/json',
+    });
+    const adminKey = request.headers.get('X-Admin-Key');
+    if (adminKey) headers.set('X-Admin-Key', adminKey);
     const init: RequestInit = {
       method: request.method,
       cache: 'no-store',
-      headers: { 'Content-Type': request.headers.get('Content-Type') ?? 'application/json' },
+      headers,
     };
     if (!['GET', 'HEAD'].includes(request.method)) init.body = await request.text();
     const response = await fetch(target, init);

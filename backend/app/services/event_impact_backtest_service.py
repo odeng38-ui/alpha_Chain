@@ -99,12 +99,20 @@ class EventImpactBacktestService:
             json.dumps(frozen, sort_keys=True, ensure_ascii=False).encode()
         ).hexdigest()
         observations = sum(item["observations"] for item in metrics.values())
+        failure_conditions = []
+        if observations < 20:
+            failure_conditions.append("INSUFFICIENT_OUTCOMES")
+        for key, values in metrics.items():
+            if values["observations"] and values["direction_hit_rate"] < 0.5:
+                failure_conditions.append(f"DIRECTION_HIT_RATE_BELOW_50_{key.upper()}")
+            if values["observations"] and values["average_aligned_return"] <= 0:
+                failure_conditions.append(f"NON_POSITIVE_ALIGNED_RETURN_{key.upper()}")
         report = {
             "summary": {"events": len(events), "candidate_rows": len(samples),
                         "outcome_observations": observations},
             "metrics": metrics,
             "samples": samples,
-            "failure_conditions": ["INSUFFICIENT_OUTCOMES"] if observations < 20 else [],
+            "failure_conditions": failure_conditions,
             "bias_checklist": {
                 "point_in_time_candidates": True,
                 "pre_event_prices_only": True,

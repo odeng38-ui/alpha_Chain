@@ -49,6 +49,8 @@ def test_event_backtest_is_point_in_time_and_reproducible():
     assert first.dataset_hash == second.dataset_hash
     assert first.report["summary"] == {"events": 2, "candidate_rows": 2, "outcome_observations": 4}
     assert first.report["metrics"]["1d"]["direction_hit_rate"] == 1.0
+    assert first.status == "FAILED_ACCEPTANCE"
+    assert first.report["failure_conditions"] == ["INSUFFICIENT_OUTCOMES"]
     assert first.report["bias_checklist"]["pre_event_prices_only"] is True
     assert first.report["samples"][0]["available_at"] == "2025-01-03T00:00:00"
     assert db.query(BacktestRun).count() == 2

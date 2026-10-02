@@ -60,8 +60,7 @@ def list_classifications(event_kind: str | None = None,
                          limit: int = Query(100, ge=1, le=500),
                          db: Session = Depends(get_db)):
     query = db.query(NewsClassification, NewsArticle).join(
-        NewsArticle,
-    NewsCandidateValidationRun, NewsArticle.id == NewsClassification.news_article_id
+        NewsArticle, NewsArticle.id == NewsClassification.news_article_id,
     )
     if event_kind:
         query = query.filter(NewsClassification.event_kind == event_kind.upper())
@@ -102,8 +101,7 @@ def list_stock_candidates(article_id: int | None = None,
         NewsClassification,
         NewsClassification.id == NewsStockCandidate.classification_id,
     ).join(
-        NewsArticle,
-    NewsCandidateValidationRun, NewsArticle.id == NewsClassification.news_article_id,
+        NewsArticle, NewsArticle.id == NewsClassification.news_article_id,
     ).join(Security, Security.id == NewsStockCandidate.security_id).join(
         Company, Company.id == Security.company_id,
     )

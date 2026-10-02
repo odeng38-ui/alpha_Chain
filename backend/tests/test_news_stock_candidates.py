@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.v1.endpoints.news import list_stock_candidates
 from app.db.session import Base
 from app.models.schema import (
     Company,
@@ -144,4 +145,17 @@ def test_balanced_selection_prevents_primary_industry_monopoly():
         item.explanation["selection_strategy"] == "balanced_by_industry"
         for item in candidates
     )
+    db.close()
+
+def test_candidate_list_endpoint_query_executes():
+    db = Session()
+    add_security(db, "Chip", "000006", "SEMICONDUCTORS_ELECTRONICS", 1000)
+    article, _ = add_classification(db)
+    db.commit()
+    NewsStockCandidateService().generate(db, article_id=article.id)
+    response = list_stock_candidates(
+        article_id=article.id, event_kind=None, limit=100, db=db,
+    )
+    assert response["count"] == 1
+    assert response["data"][0]["ticker"] == "000006"
     db.close()

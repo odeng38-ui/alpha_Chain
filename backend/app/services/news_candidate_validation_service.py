@@ -32,13 +32,18 @@ class NewsCandidateValidationService:
         all_classification_count = db.query(NewsClassification).filter(
             NewsClassification.version == "news-rules-v1",
         ).count()
-        classifications = db.query(NewsClassification, NewsArticle).join(
+        active_classifications = db.query(NewsClassification, NewsArticle).join(
             NewsArticle, NewsArticle.id == NewsClassification.news_article_id,
         ).filter(
             NewsClassification.version == "news-rules-v1",
             NewsArticle.published_at >= window_start,
             NewsArticle.published_at < window_end,
         ).all()
+        classifications = [
+            (classification, article)
+            for classification, article in active_classifications
+            if classification.industries
+        ]
         active_classification_ids = [item.id for item, _ in classifications]
         all_candidate_count = db.query(NewsStockCandidate).filter(
             NewsStockCandidate.version == "news-link-v1",
@@ -84,7 +89,9 @@ class NewsCandidateValidationService:
             "scope": {
                 "window_start": window_start.isoformat(),
                 "window_end_exclusive": window_end.isoformat(),
-                "active_classifications": total_articles,
+                "active_total_classifications": len(active_classifications),
+                "active_eligible_classifications": total_articles,
+                "active_excluded_classifications": len(active_classifications) - total_articles,
                 "historical_classifications": all_classification_count,
                 "active_candidates": total_candidates,
                 "historical_candidates": all_candidate_count,

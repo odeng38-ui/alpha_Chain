@@ -105,9 +105,39 @@ def test_validation_preserves_history_but_scores_only_active_window():
     assert result["status"] == "PASSED"
     scope = result["report"]["scope"]
     assert scope["historical_classifications"] == 2
-    assert scope["active_classifications"] == 1
+    assert scope["active_total_classifications"] == 1
+    assert scope["active_eligible_classifications"] == 1
     assert scope["historical_candidates"] == 11
     assert scope["active_candidates"] == 10
     assert db.query(NewsClassification).count() == 2
     assert db.query(NewsStockCandidate).count() == 11
+    db.close()
+
+def test_validation_excludes_unlinkable_classification_from_coverage():
+    db = Session()
+    as_of = date(2026, 10, 2)
+    published_at = datetime.combine(as_of - timedelta(days=1), datetime.min.time())
+    add_dataset(db, published_at, 10)
+    article = NewsArticle(
+        external_id="f" * 64, source="test", title="Unclassified news",
+        url="https://example.com/other", published_at=published_at,
+        raw_hash="e" * 64, raw_metadata={},
+    )
+    db.add(article)
+    db.flush()
+    db.add(NewsClassification(
+        news_article_id=article.id, event_kind="OTHER", industries=[],
+        direction="NEUTRAL", confidence=0.3, matched_keywords=[],
+        rationale="no match", review_required=True, version="news-rules-v1",
+    ))
+    db.commit()
+
+    result = NewsCandidateValidationService().validate(db, as_of)
+
+    assert result["status"] == "PASSED"
+    scope = result["report"]["scope"]
+    assert scope["active_total_classifications"] == 2
+    assert scope["active_eligible_classifications"] == 1
+    assert scope["active_excluded_classifications"] == 1
+    assert result["report"]["metrics"]["article_coverage_rate"] == 1.0
     db.close()

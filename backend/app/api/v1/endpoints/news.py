@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -7,11 +9,13 @@ from app.db.session import get_db
 from app.models.schema import (
     Company,
     NewsArticle,
+    NewsCandidateValidationRun,
     NewsClassification,
     NewsStockCandidate,
     Security,
 )
 from app.security import require_admin
+from app.services.news_candidate_validation_service import NewsCandidateValidationService
 from app.services.news_classification_service import NewsClassificationService
 from app.services.news_collection_service import NewsCollectionService
 from app.services.news_stock_candidate_service import NewsStockCandidateService
@@ -56,7 +60,8 @@ def list_classifications(event_kind: str | None = None,
                          limit: int = Query(100, ge=1, le=500),
                          db: Session = Depends(get_db)):
     query = db.query(NewsClassification, NewsArticle).join(
-        NewsArticle, NewsArticle.id == NewsClassification.news_article_id
+        NewsArticle,
+    NewsCandidateValidationRun, NewsArticle.id == NewsClassification.news_article_id
     )
     if event_kind:
         query = query.filter(NewsClassification.event_kind == event_kind.upper())
@@ -97,7 +102,8 @@ def list_stock_candidates(article_id: int | None = None,
         NewsClassification,
         NewsClassification.id == NewsStockCandidate.classification_id,
     ).join(
-        NewsArticle, NewsArticle.id == NewsClassification.news_article_id,
+        NewsArticle,
+    NewsCandidateValidationRun, NewsArticle.id == NewsClassification.news_article_id,
     ).join(Security, Security.id == NewsStockCandidate.security_id).join(
         Company, Company.id == Security.company_id,
     )
@@ -118,3 +124,23 @@ def list_stock_candidates(article_id: int | None = None,
         "industry_id": candidate.industry_id,
         "explanation": candidate.explanation, "version": candidate.version,
     } for candidate, classification, article, security, company in rows]}
+
+@router.post("/stock-candidates/validate", dependencies=[Depends(require_admin)])
+def validate_stock_candidates(as_of: date | None = None,
+                              db: Session = Depends(get_db)):
+    return NewsCandidateValidationService().validate(db, as_of)
+
+
+@router.get("/stock-candidates/validation-runs/latest")
+def latest_stock_candidate_validation(db: Session = Depends(get_db)):
+    run = db.query(NewsCandidateValidationRun).order_by(
+        NewsCandidateValidationRun.evaluated_at.desc(),
+        NewsCandidateValidationRun.id.desc(),
+    ).first()
+    if run is None:
+        return {"status": "NOT_RUN", "data": None}
+    return {"status": run.status, "data": {
+        "run_id": run.id, "version": run.version,
+        "as_of": run.as_of.isoformat(), "report": run.report,
+        "evaluated_at": run.evaluated_at.isoformat(),
+    }}

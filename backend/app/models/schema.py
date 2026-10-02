@@ -479,3 +479,13 @@ class NewsStockCandidate(Base):
     version = Column(String(30), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class NewsCandidateValidationRun(Base):
+    __tablename__ = "news_candidate_validation_run"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    version = Column(String(50), nullable=False)
+    status = Column(String(20), nullable=False, index=True)
+    as_of = Column(Date, nullable=False)
+    report = Column(JSON, nullable=False)
+    evaluated_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)

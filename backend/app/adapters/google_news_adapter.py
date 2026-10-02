@@ -28,6 +28,15 @@ class GoogleNewsRssAdapter:
     def __init__(self, timeout: float = 30.0):
         self.timeout = timeout
 
+    @staticmethod
+    def _repair_text(value: str) -> str:
+        if not any(marker in value for marker in ("â", "Ã", "Â")):
+            return value
+        try:
+            return value.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return value
+
     def fetch(self, timespan: str = "24h", max_records: int = 100,
               query: str | None = None) -> list[NewsArticleRecord]:
         search_query = query or self.default_query
@@ -46,7 +55,7 @@ class GoogleNewsRssAdapter:
 
         records = []
         for item in root.findall("./channel/item"):
-            title = (item.findtext("title") or "").strip()
+            title = self._repair_text((item.findtext("title") or "").strip())
             url = (item.findtext("link") or "").strip()
             published = (item.findtext("pubDate") or "").strip()
             source_node = item.find("source")

@@ -83,3 +83,10 @@ def test_gdelt_retries_rate_limit(monkeypatch):
 
     assert GdeltNewsAdapter(max_attempts=2).fetch(max_records=1) == []
     assert calls == [1]
+
+
+def test_google_news_repairs_mojibake():
+    from app.adapters.google_news_adapter import GoogleNewsRssAdapter
+
+    broken = "stocks \u00e2\u0080\u0094 bonds"
+    assert GoogleNewsRssAdapter._repair_text(broken) == "stocks \u2014 bonds"

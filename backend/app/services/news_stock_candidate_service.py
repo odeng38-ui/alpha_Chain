@@ -35,7 +35,7 @@ class NewsStockCandidateService:
                 )
             ))
         rows = query.order_by(NewsArticle.published_at.desc()).limit(classification_limit).all()
-        created = updated = classifications_linked = 0
+        created = updated = deleted = classifications_linked = 0
         for classification, article in rows:
             industries = list(classification.industries or [])
             if not industries:
@@ -67,17 +67,15 @@ class NewsStockCandidateService:
             ranked = []
             for security in securities:
                 price = price_by_security.get(security.id)
-                if price is None:
-                    continue
                 industry_rank = industries.index(security.company.industry_id)
                 industry_relevance = max(0.65, 1.0 - 0.10 * industry_rank)
-                turnover = self._turnover(price)
+                turnover = self._turnover(price) if price is not None else 0.0
                 liquidity = (
                     sum(value <= turnover for value in turnovers) / len(turnovers)
-                    if turnovers else 0.0
+                    if price is not None and turnovers else 0.0
                 )
-                age_days = max(0, (cutoff - price.trade_date).days)
-                freshness = max(0.0, 1.0 - age_days / 10.0)
+                age_days = max(0, (cutoff - price.trade_date).days) if price is not None else None
+                freshness = max(0.0, 1.0 - age_days / 10.0) if age_days is not None else 0.0
                 relevance = round(
                     100.0 * float(classification.confidence)
                     * (0.75 * industry_relevance + 0.15 * liquidity + 0.10 * freshness),
@@ -118,15 +116,22 @@ class NewsStockCandidateService:
                     "industry_relevance": round(exposure, 4),
                     "liquidity_percentile": round(liquidity, 6),
                     "turnover_proxy": round(turnover, 2),
-                    "price_trade_date": price.trade_date.isoformat(),
+                    "price_trade_date": price.trade_date.isoformat() if price is not None else None,
                     "price_freshness": round(freshness, 6),
                     "no_lookahead_cutoff": cutoff.isoformat(),
+                    "data_quality": "OK" if price is not None else "MISSING_PRE_NEWS_PRICE",
                     "formula": "classification_confidence * industry * liquidity * freshness",
                 }
+            selected_ids = [item[1].id for item in selected]
+            deleted += db.query(NewsStockCandidate).filter(
+                NewsStockCandidate.classification_id == classification.id,
+                NewsStockCandidate.version == self.version,
+                ~NewsStockCandidate.security_id.in_(selected_ids),
+            ).delete(synchronize_session=False) if selected_ids else 0
             classifications_linked += int(bool(selected))
         db.commit()
         return {
             "version": self.version, "processed": len(rows),
             "classifications_linked": classifications_linked,
-            "created": created, "updated": updated,
+            "created": created, "updated": updated, "deleted": deleted,
         }

@@ -73,6 +73,18 @@ def test_candidates_link_industry_rank_by_pre_news_liquidity_and_are_idempotent(
     second_security = add_security(
         db, "Thin Chip", "000002", "SEMICONDUCTORS_ELECTRONICS", 100,
     )
+    missing_price_company = Company(
+        name="No History Chip", corp_code="00000005", status="ACTIVE",
+        industry_id="SEMICONDUCTORS_ELECTRONICS",
+    )
+    db.add(missing_price_company)
+    db.flush()
+    missing_price_security = Security(
+        company_id=missing_price_company.id, market="KOSPI", ticker="000005",
+        security_type="COMMON",
+    )
+    db.add(missing_price_security)
+    db.flush()
     add_security(db, "Food", "000003", "FOOD_BEVERAGE", 10000)
     article, _ = add_classification(db)
     db.add(DailyPrice(
@@ -86,12 +98,15 @@ def test_candidates_link_industry_rank_by_pre_news_liquidity_and_are_idempotent(
     second = service.generate(db, article_id=article.id)
     candidates = db.query(NewsStockCandidate).order_by(NewsStockCandidate.rank).all()
 
-    assert first["created"] == 2
+    assert first["created"] == 3
     assert second["processed"] == 0
-    assert [item.security_id for item in candidates] == [first_security.id, second_security.id]
+    assert [item.security_id for item in candidates] == [
+        first_security.id, second_security.id, missing_price_security.id,
+    ]
     assert candidates[0].expected_direction == "NEGATIVE"
     assert candidates[0].explanation["price_trade_date"] == "2026-10-01"
     assert candidates[0].explanation["no_lookahead_cutoff"] == "2026-10-02"
+    assert candidates[2].explanation["data_quality"] == "MISSING_PRE_NEWS_PRICE"
     db.close()
 
 

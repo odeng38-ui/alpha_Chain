@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models.schema import (
     BacktestRun,
+    Company,
     DailyPrice,
     NewsArticle,
     NewsCandidateValidationRun,
@@ -50,6 +51,46 @@ class NewsCandidateBacktestService:
             "exit_price": exit_price,
             "raw_return": raw_return,
             "aligned_net_return": raw_return * sign - self.transaction_cost,
+        }
+
+    @staticmethod
+    def _benchmark(db: Session, entry_date: date, exit_date: date):
+        entry_rows = db.query(DailyPrice).filter(
+            DailyPrice.trade_date == entry_date,
+        ).all()
+        exit_rows = db.query(DailyPrice).filter(
+            DailyPrice.trade_date == exit_date,
+        ).all()
+        entry_by_security = {row.security_id: float(row.open or 0) for row in entry_rows}
+        exit_by_security = {
+            row.security_id: float(row.adjusted_close or row.close or 0)
+            for row in exit_rows
+        }
+        ids = set(entry_by_security) & set(exit_by_security)
+        industries = dict(db.query(Security.id, Company.industry_id).join(
+            Company, Company.id == Security.company_id,
+        ).filter(Security.id.in_(ids)).all()) if ids else {}
+        returns = {}
+        by_industry = defaultdict(list)
+        for security_id in ids:
+            entry_price = entry_by_security[security_id]
+            exit_price = exit_by_security[security_id]
+            if entry_price <= 0 or exit_price <= 0:
+                continue
+            value = exit_price / entry_price - 1.0
+            returns[security_id] = value
+            industry = industries.get(security_id)
+            if industry:
+                by_industry[industry].append(value)
+        return {
+            "market_return": median(returns.values()) if returns else 0.0,
+            "market_count": len(returns),
+            "industry_returns": {
+                industry: median(values) for industry, values in by_industry.items()
+            },
+            "industry_counts": {
+                industry: len(values) for industry, values in by_industry.items()
+            },
         }
 
     @staticmethod
@@ -108,23 +149,27 @@ class NewsCandidateBacktestService:
         for horizon in horizons:
             key = f"{horizon}d"
             outcomes = []
-            by_article = defaultdict(list)
-            by_article_industry = defaultdict(list)
+            benchmark_cache = {}
             for sample in samples:
                 outcome = sample["outcomes"][key]
                 if outcome is None:
                     continue
-                by_article[sample["article_id"]].append(outcome["raw_return"])
-                by_article_industry[(sample["article_id"], sample["industry_id"])].append(
-                    outcome["raw_return"]
-                )
-            for sample in samples:
-                outcome = sample["outcomes"][key]
-                if outcome is None:
-                    continue
+                pair = (date.fromisoformat(outcome["entry_date"]),
+                        date.fromisoformat(outcome["exit_date"]))
+                if pair not in benchmark_cache:
+                    benchmark_cache[pair] = self._benchmark(db, *pair)
+                benchmark = benchmark_cache[pair]
                 sign = 1.0 if sample["direction"] == "POSITIVE" else -1.0
-                market = median(by_article[sample["article_id"]])
-                industry = median(by_article_industry[(sample["article_id"], sample["industry_id"])])
+                market = benchmark["market_return"]
+                industry = benchmark["industry_returns"].get(
+                    sample["industry_id"], market,
+                )
+                outcome["market_benchmark_return"] = round(market, 10)
+                outcome["industry_benchmark_return"] = round(industry, 10)
+                outcome["market_benchmark_count"] = benchmark["market_count"]
+                outcome["industry_benchmark_count"] = benchmark["industry_counts"].get(
+                    sample["industry_id"], 0,
+                )
                 outcome["aligned_market_excess"] = (
                     outcome["raw_return"] - market
                 ) * sign - self.transaction_cost

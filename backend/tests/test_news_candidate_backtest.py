@@ -99,3 +99,35 @@ def test_backtest_uses_next_korean_session_open_and_marks_small_sample():
     assert run.report["metrics"]["1d"]["observations"] == 1
     assert run.report["horizon_acceptance"]["1d"]["status"] == "INSUFFICIENT_SAMPLE"
     db.close()
+
+def test_benchmark_uses_full_market_and_same_industry_universe():
+    db = Session()
+    for index, close in enumerate(("102", "100"), 1):
+        company = Company(
+            name=f"Benchmark {index}", corp_code=f"{index:08d}",
+            status="ACTIVE", industry_id="FINANCIALS",
+        )
+        db.add(company)
+        db.flush()
+        security = Security(
+            company_id=company.id, market="KOSPI", ticker=f"{index:06d}",
+            security_type="COMMON",
+        )
+        db.add(security)
+        db.flush()
+        db.add(DailyPrice(
+            security_id=security.id, trade_date=date(2026, 1, 3),
+            open=Decimal("100"), close=Decimal("100"), adjusted_close=Decimal("100"),
+        ))
+        db.add(DailyPrice(
+            security_id=security.id, trade_date=date(2026, 1, 4),
+            open=Decimal("100"), close=Decimal(close), adjusted_close=Decimal(close),
+        ))
+    db.commit()
+    result = NewsCandidateBacktestService._benchmark(
+        db, date(2026, 1, 3), date(2026, 1, 4),
+    )
+    assert result["market_count"] == 2
+    assert result["market_return"] == pytest.approx(0.01)
+    assert result["industry_returns"]["FINANCIALS"] == pytest.approx(0.01)
+    db.close()

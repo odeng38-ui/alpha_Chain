@@ -10,6 +10,7 @@ from app.models.schema import BacktestRun
 from app.security import require_admin
 from app.services.backtest_service import BacktestService
 from app.services.event_impact_backtest_service import EventImpactBacktestService
+from app.services.news_candidate_backtest_service import NewsCandidateBacktestService
 
 router = APIRouter(prefix="/backtests", tags=["Backtests"])
 service = BacktestService()
@@ -69,6 +70,26 @@ def run_event_impact_backtest(req: EventImpactBacktestRequest,
     return {"id": row.id, "status": row.status,
             "dataset_hash": row.dataset_hash, "report": row.report}
 
+
+class NewsCandidateBacktestRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    horizons: list[int] = Field(default_factory=lambda: [1, 5, 20])
+    candidate_limit: int = Field(default=500, ge=1, le=2000)
+
+
+@router.post("/news-candidates", dependencies=[Depends(require_admin)])
+def run_news_candidate_backtest(req: NewsCandidateBacktestRequest,
+                                db: Session = Depends(get_db)):
+    if not req.horizons or any(item not in {1, 5, 20} for item in req.horizons):
+        raise HTTPException(status_code=422, detail="horizons must be selected from 1, 5, 20")
+    try:
+        row = NewsCandidateBacktestService().run(
+            db, req.name, tuple(sorted(set(req.horizons))), req.candidate_limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"id": row.id, "status": row.status,
+            "dataset_hash": row.dataset_hash, "report": row.report}
 
 @router.get("/{run_id}")
 def get_backtest(run_id: int, db: Session = Depends(get_db)):

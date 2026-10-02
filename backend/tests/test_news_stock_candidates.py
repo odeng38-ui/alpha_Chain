@@ -121,3 +121,27 @@ def test_regenerate_updates_without_duplicate_candidates():
     assert result["updated"] == 1
     assert db.query(NewsStockCandidate).count() == 1
     db.close()
+
+def test_balanced_selection_prevents_primary_industry_monopoly():
+    db = Session()
+    for index in range(10):
+        add_security(db, f"Finance {index}", f"1{index:05d}", "FINANCIALS", 2000 - index)
+        add_security(db, f"Industrial {index}", f"2{index:05d}", "INDUSTRIALS", 1000 - index)
+    article, _ = add_classification(db, ["FINANCIALS", "INDUSTRIALS"])
+    db.commit()
+
+    result = NewsStockCandidateService().generate(
+        db, article_id=article.id, candidates_per_article=10,
+    )
+    candidates = db.query(NewsStockCandidate).all()
+    counts = {
+        industry: sum(item.industry_id == industry for item in candidates)
+        for industry in ("FINANCIALS", "INDUSTRIALS")
+    }
+    assert result["created"] == 10
+    assert counts == {"FINANCIALS": 5, "INDUSTRIALS": 5}
+    assert all(
+        item.explanation["selection_strategy"] == "balanced_by_industry"
+        for item in candidates
+    )
+    db.close()

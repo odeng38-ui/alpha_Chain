@@ -20,6 +20,25 @@ class NewsStockCandidateService:
             return float(price.value)
         return float(price.adjusted_close or price.close or 0) * float(price.volume or 0)
 
+    @staticmethod
+    def _balanced_selection(ranked, industries, limit):
+        buckets = {industry: [] for industry in industries}
+        for item in ranked:
+            buckets[item[1].company.industry_id].append(item)
+        for items in buckets.values():
+            items.sort(key=lambda item: (-item[0], item[1].id))
+        selected = []
+        while len(selected) < limit:
+            added = False
+            for industry in industries:
+                if buckets[industry] and len(selected) < limit:
+                    selected.append(buckets[industry].pop(0))
+                    added = True
+            if not added:
+                break
+        selected.sort(key=lambda item: (-item[0], item[1].id))
+        return selected
+
     def generate(self, db: Session, article_id: int | None = None,
                  classification_limit: int = 100, candidates_per_article: int = 20,
                  regenerate: bool = False):
@@ -83,8 +102,9 @@ class NewsStockCandidateService:
                 )
                 ranked.append((relevance, security, industry_relevance,
                                liquidity, freshness, turnover, price))
-            ranked.sort(key=lambda item: (-item[0], item[1].id))
-            selected = ranked[:candidates_per_article]
+            selected = self._balanced_selection(
+                ranked, industries, candidates_per_article,
+            )
             existing = {
                 item.security_id: item for item in db.query(NewsStockCandidate).filter(
                     NewsStockCandidate.classification_id == classification.id,
@@ -121,6 +141,7 @@ class NewsStockCandidateService:
                     "no_lookahead_cutoff": cutoff.isoformat(),
                     "data_quality": "OK" if price is not None else "MISSING_PRE_NEWS_PRICE",
                     "formula": "classification_confidence * industry * liquidity * freshness",
+                    "selection_strategy": "balanced_by_industry",
                 }
             selected_ids = [item[1].id for item in selected]
             deleted += db.query(NewsStockCandidate).filter(

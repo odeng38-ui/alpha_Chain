@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.adapters.gdelt_news_adapter import GdeltNewsAdapter
+from app.adapters.google_news_adapter import FallbackNewsAdapter, GoogleNewsRssAdapter
 from app.db.session import get_db
 from app.models.schema import NewsArticle
 from app.security import require_admin
@@ -14,7 +15,8 @@ router = APIRouter(prefix="/news", tags=["News"])
 def sync_news(timespan: str = Query("24h", pattern=r"^[1-9][0-9]*(min|h|d|w)$"),
               max_records: int = Query(100, ge=1, le=250),
               db: Session = Depends(get_db)):
-    return NewsCollectionService(GdeltNewsAdapter()).sync(db, timespan, max_records)
+    adapter = FallbackNewsAdapter(GdeltNewsAdapter(), GoogleNewsRssAdapter())
+    return NewsCollectionService(adapter).sync(db, timespan, max_records)
 
 
 @router.get("/articles")

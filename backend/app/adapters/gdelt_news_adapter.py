@@ -11,6 +11,7 @@ from app.adapters.base import AdapterError
 
 @dataclass(frozen=True)
 class NewsArticleRecord:
+    source: str
     external_id: str
     title: str
     url: str
@@ -80,7 +81,7 @@ class GdeltNewsAdapter:
                 json.dumps(article, ensure_ascii=False, sort_keys=True).encode()
             ).hexdigest()
             records.append(NewsArticleRecord(
-                external_id=hashlib.sha256(canonical.encode()).hexdigest(),
+                source="GDELT", external_id=hashlib.sha256(canonical.encode()).hexdigest(),
                 title=title, url=canonical, domain=article.get("domain"),
                 language=article.get("language"),
                 source_country=article.get("sourcecountry"),

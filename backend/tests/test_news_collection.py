@@ -27,7 +27,7 @@ class MockAdapter:
 
     def fetch(self, timespan="24h", max_records=100):
         return [NewsArticleRecord(
-            external_id="b" * 64, title="Federal Reserve holds rates",
+            source="Mock", external_id="b" * 64, title="Federal Reserve holds rates",
             url="https://example.com/fed", domain="example.com",
             language="English", source_country="United States",
             published_at=datetime(2026, 10, 1, 12), image_url=None,

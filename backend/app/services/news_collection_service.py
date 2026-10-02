@@ -19,7 +19,7 @@ class NewsCollectionService:
         for item in records:
             row = existing.get(item.external_id)
             if row is None:
-                row = NewsArticle(external_id=item.external_id, source="GDELT")
+                row = NewsArticle(external_id=item.external_id, source=item.source)
                 db.add(row)
                 existing[item.external_id] = row
                 created += 1
@@ -37,6 +37,6 @@ class NewsCollectionService:
             row.raw_hash = item.raw_hash
             row.raw_metadata = item.raw_metadata
         db.commit()
-        return {"source": "GDELT", "fetched": len(records),
+        return {"sources": sorted({item.source for item in records}), "fetched": len(records),
                 "created": created, "updated": updated,
                 "unchanged": len(records) - created - updated}

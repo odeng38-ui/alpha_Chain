@@ -46,13 +46,13 @@ def add_dataset(db, published_at, count, quality="OK"):
     for index in range(count):
         industry = "FINANCIALS" if index < 7 else "INDUSTRIALS"
         company = Company(
-            name=f"Company {index}", corp_code=f"{index:08d}",
+            name=f"Company {article.id}-{index}", corp_code=f"{article.id:04d}{index:04d}",
             status="ACTIVE", industry_id=industry,
         )
         db.add(company)
         db.flush()
         security = Security(
-            company_id=company.id, market="KOSPI", ticker=f"{index:06d}",
+            company_id=company.id, market="KOSPI", ticker=f"{article.id:02d}{index:04d}",
             security_type="COMMON",
         )
         db.add(security)
@@ -87,6 +87,27 @@ def test_validation_fails_stale_missing_price_and_shallow_candidates():
     result = NewsCandidateValidationService().validate(db, as_of)
     assert result["status"] == "FAILED"
     assert set(result["report"]["failed_checks"]) >= {
-        "fresh_articles", "price_evidence", "industry_concentration", "candidate_depth",
+        "fresh_articles", "price_evidence", "article_coverage", "candidate_depth",
     }
+    db.close()
+
+def test_validation_preserves_history_but_scores_only_active_window():
+    db = Session()
+    as_of = date(2026, 10, 2)
+    add_dataset(
+        db, datetime.combine(as_of - timedelta(days=30), datetime.min.time()),
+        1, quality="MISSING_PRE_NEWS_PRICE",
+    )
+    add_dataset(db, datetime.combine(as_of - timedelta(days=1), datetime.min.time()), 10)
+
+    result = NewsCandidateValidationService().validate(db, as_of)
+
+    assert result["status"] == "PASSED"
+    scope = result["report"]["scope"]
+    assert scope["historical_classifications"] == 2
+    assert scope["active_classifications"] == 1
+    assert scope["historical_candidates"] == 11
+    assert scope["active_candidates"] == 10
+    assert db.query(NewsClassification).count() == 2
+    assert db.query(NewsStockCandidate).count() == 11
     db.close()

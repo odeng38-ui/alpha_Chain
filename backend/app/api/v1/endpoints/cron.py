@@ -3,19 +3,20 @@ import secrets
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.adapters.gdelt_news_adapter import GdeltNewsAdapter
+from app.adapters.google_news_adapter import FallbackNewsAdapter, GoogleNewsRssAdapter
 from app.config import settings
 from app.db.session import get_db
+from app.services.news_candidate_validation_service import NewsCandidateValidationService
+from app.services.news_classification_service import NewsClassificationService
+from app.services.news_collection_service import NewsCollectionService
+from app.services.news_stock_candidate_service import NewsStockCandidateService
 from app.services.price_service import incremental_due_batch_update
 
 router = APIRouter(prefix="/cron", tags=["Cron"])
 
 
-@router.get("/prices")
-def collect_due_prices(
-    authorization: str | None = Header(default=None),
-    db: Session = Depends(get_db),
-):
-    """Run one bounded daily-price batch from Vercel Cron."""
+def _authorize_cron(authorization: str | None):
     if not settings.CRON_SECRET:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -29,7 +30,39 @@ def collect_due_prices(
             detail="Invalid cron authorization",
         )
 
+
+def run_news_pipeline(db: Session):
+    adapter = FallbackNewsAdapter(GdeltNewsAdapter(), GoogleNewsRssAdapter())
+    collection = NewsCollectionService(adapter).sync(db, "24h", 100)
+    classification = NewsClassificationService().classify_pending(db, 100, False)
+    candidates = NewsStockCandidateService().generate(db, None, 100, 20, False)
+    validation = NewsCandidateValidationService().validate(db)
+    return {
+        "collection": collection,
+        "classification": classification,
+        "candidates": candidates,
+        "validation": validation,
+    }
+
+
+@router.get("/prices")
+def collect_due_prices(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Run one bounded daily-price batch from Vercel Cron."""
+    _authorize_cron(authorization)
     return incremental_due_batch_update(
         db,
         batch_size=max(1, min(settings.CRON_BATCH_SIZE, 100)),
     )
+
+
+@router.get("/news")
+def collect_and_link_news(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Collect, classify, link, and validate the active news window."""
+    _authorize_cron(authorization)
+    return run_news_pipeline(db)

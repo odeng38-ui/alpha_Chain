@@ -33,6 +33,10 @@
     {
       "path": "/api/v1/cron/prices",
       "schedule": "30 7 * * 1-5"
+    },
+    {
+      "path": "/api/v1/cron/news",
+      "schedule": "0 0 * * *"
     }
   ]
 }

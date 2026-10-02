@@ -1,5 +1,5 @@
 from collections import Counter
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -25,12 +25,28 @@ class NewsCandidateValidationService:
 
     def validate(self, db: Session, as_of: date | None = None):
         as_of = as_of or date.today()
+        window_start = datetime.combine(
+            as_of - timedelta(days=self.thresholds["max_article_age_days"]), time.min,
+        )
+        window_end = datetime.combine(as_of + timedelta(days=1), time.min)
+        all_classification_count = db.query(NewsClassification).filter(
+            NewsClassification.version == "news-rules-v1",
+        ).count()
         classifications = db.query(NewsClassification, NewsArticle).join(
             NewsArticle, NewsArticle.id == NewsClassification.news_article_id,
-        ).filter(NewsClassification.version == "news-rules-v1").all()
+        ).filter(
+            NewsClassification.version == "news-rules-v1",
+            NewsArticle.published_at >= window_start,
+            NewsArticle.published_at < window_end,
+        ).all()
+        active_classification_ids = [item.id for item, _ in classifications]
+        all_candidate_count = db.query(NewsStockCandidate).filter(
+            NewsStockCandidate.version == "news-link-v1",
+        ).count()
         candidates = db.query(NewsStockCandidate).filter(
             NewsStockCandidate.version == "news-link-v1",
-        ).all()
+            NewsStockCandidate.classification_id.in_(active_classification_ids),
+        ).all() if active_classification_ids else []
         article_dates = {article.id: article.published_at.date()
                          for _, article in classifications}
         total_articles = len(article_dates)
@@ -65,6 +81,14 @@ class NewsCandidateValidationService:
         }
         report = {
             "as_of": as_of.isoformat(), "thresholds": self.thresholds,
+            "scope": {
+                "window_start": window_start.isoformat(),
+                "window_end_exclusive": window_end.isoformat(),
+                "active_classifications": total_articles,
+                "historical_classifications": all_classification_count,
+                "active_candidates": total_candidates,
+                "historical_candidates": all_candidate_count,
+            },
             "metrics": {
                 "articles": total_articles, "fresh_articles": len(fresh_ids),
                 "fresh_article_rate": round(fresh_rate, 6),

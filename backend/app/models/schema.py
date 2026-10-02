@@ -459,3 +459,23 @@ class NewsClassification(Base):
     review_required = Column(Boolean, nullable=False, default=False)
     version = Column(String(30), nullable=False)
     classified_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+class NewsStockCandidate(Base):
+    __tablename__ = "news_stock_candidate"
+    __table_args__ = (
+        Index("uq_news_stock_candidate_version", "classification_id", "security_id", "version", unique=True),
+        Index("ix_news_stock_candidate_rank", "classification_id", "version", "rank"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    classification_id = Column(Integer, ForeignKey("news_classification.id", ondelete="CASCADE"), nullable=False, index=True)
+    security_id = Column(Integer, ForeignKey("security.id"), nullable=False, index=True)
+    industry_id = Column(String(50), nullable=False, index=True)
+    expected_direction = Column(String(20), nullable=False)
+    relevance_score = Column(Float, nullable=False)
+    confidence = Column(Float, nullable=False)
+    rank = Column(Integer, nullable=False)
+    explanation = Column(JSON, nullable=False)
+    version = Column(String(30), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

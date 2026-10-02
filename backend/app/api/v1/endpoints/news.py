@@ -144,3 +144,10 @@ def latest_stock_candidate_validation(db: Session = Depends(get_db)):
         "as_of": run.as_of.isoformat(), "report": run.report,
         "evaluated_at": run.evaluated_at.isoformat(),
     }}
+
+@router.post("/prune-stale", dependencies=[Depends(require_admin)])
+def prune_stale_news(max_age_days: int = Query(7, ge=1, le=365),
+                     as_of: date | None = None,
+                     dry_run: bool = True,
+                     db: Session = Depends(get_db)):
+    return NewsCollectionService.prune_stale(db, max_age_days, as_of, dry_run)

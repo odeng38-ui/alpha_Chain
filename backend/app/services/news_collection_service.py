@@ -1,6 +1,8 @@
+from datetime import date, datetime, timedelta
+
 from sqlalchemy.orm import Session
 
-from app.models.schema import NewsArticle
+from app.models.schema import NewsArticle, NewsClassification, NewsStockCandidate
 
 
 class NewsCollectionService:
@@ -40,3 +42,28 @@ class NewsCollectionService:
         return {"sources": sorted({item.source for item in records}), "fetched": len(records),
                 "created": created, "updated": updated,
                 "unchanged": len(records) - created - updated}
+    @staticmethod
+    def prune_stale(db: Session, max_age_days: int = 7,
+                    as_of: date | None = None, dry_run: bool = True):
+        as_of = as_of or date.today()
+        cutoff = datetime.combine(as_of - timedelta(days=max_age_days), datetime.min.time())
+        article_ids = [row[0] for row in db.query(NewsArticle.id).filter(
+            NewsArticle.published_at < cutoff,
+        ).all()]
+        classification_ids = [row[0] for row in db.query(NewsClassification.id).filter(
+            NewsClassification.news_article_id.in_(article_ids),
+        ).all()] if article_ids else []
+        candidate_count = db.query(NewsStockCandidate).filter(
+            NewsStockCandidate.classification_id.in_(classification_ids),
+        ).count() if classification_ids else 0
+        if article_ids and not dry_run:
+            db.query(NewsArticle).filter(NewsArticle.id.in_(article_ids)).delete(
+                synchronize_session=False,
+            )
+            db.commit()
+        return {
+            "as_of": as_of.isoformat(), "max_age_days": max_age_days,
+            "cutoff": cutoff.isoformat(), "dry_run": dry_run,
+            "articles": len(article_ids), "article_ids": sorted(article_ids),
+            "classifications": len(classification_ids), "candidates": candidate_count,
+        }

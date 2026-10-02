@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 from xml.etree import ElementTree
@@ -25,8 +26,18 @@ class GoogleNewsRssAdapter:
         'OR source:"Associated Press" OR source:"The Hill") when:1d'
     )
 
-    def __init__(self, timeout: float = 30.0):
+    def __init__(self, timeout: float = 30.0, now: datetime | None = None):
         self.timeout = timeout
+        self.now = now or datetime.now(timezone.utc)
+
+    @staticmethod
+    def _timespan_delta(timespan: str) -> timedelta:
+        units = {"min": "minutes", "h": "hours", "d": "days", "w": "weeks"}
+        unit = next((item for item in units if timespan.endswith(item)), None)
+        if unit is None:
+            raise AdapterError(f"Unsupported news timespan: {timespan}")
+        value = int(timespan[:-len(unit)])
+        return timedelta(**{units[unit]: value})
 
     @staticmethod
     def _repair_text(value: str) -> str:
@@ -54,6 +65,7 @@ class GoogleNewsRssAdapter:
             raise AdapterError("Google News RSS request failed") from exc
 
         records = []
+        cutoff = self.now - self._timespan_delta(timespan)
         for item in root.findall("./channel/item"):
             title = self._repair_text((item.findtext("title") or "").strip())
             url = (item.findtext("link") or "").strip()
@@ -68,6 +80,9 @@ class GoogleNewsRssAdapter:
             }
             if metadata["source_name"] not in self.allowed_sources:
                 continue
+            published_at = parsedate_to_datetime(published).astimezone(timezone.utc)
+            if published_at < cutoff or published_at > self.now + timedelta(minutes=5):
+                continue
             raw_hash = hashlib.sha256(
                 json.dumps(metadata | {"title": title, "url": url, "published": published},
                            ensure_ascii=False, sort_keys=True).encode()
@@ -78,7 +93,7 @@ class GoogleNewsRssAdapter:
                 external_id=hashlib.sha256(url.encode()).hexdigest(),
                 title=title, url=url, domain=urlparse(source_url).netloc or None,
                 language="English", source_country=None,
-                published_at=parsedate_to_datetime(published).replace(tzinfo=None),
+                published_at=published_at.replace(tzinfo=None),
                 image_url=None, raw_hash=raw_hash, raw_metadata=metadata,
             ))
             if len(records) >= max_records:

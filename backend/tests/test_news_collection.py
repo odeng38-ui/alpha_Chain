@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -90,3 +90,58 @@ def test_google_news_repairs_mojibake():
 
     broken = "stocks \u00e2\u0080\u0094 bonds"
     assert GoogleNewsRssAdapter._repair_text(broken) == "stocks \u2014 bonds"
+
+
+def test_google_news_enforces_requested_publication_window(monkeypatch):
+    from app.adapters.google_news_adapter import GoogleNewsRssAdapter
+
+    xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <rss><channel>
+      <item><title>Fresh market news - Reuters</title><link>https://fresh</link>
+        <pubDate>Fri, 02 Oct 2026 11:00:00 GMT</pubDate>
+        <source url="https://reuters.com">Reuters</source><guid>fresh</guid></item>
+      <item><title>Old market news - Reuters</title><link>https://old</link>
+        <pubDate>Tue, 01 Sep 2026 11:00:00 GMT</pubDate>
+        <source url="https://reuters.com">Reuters</source><guid>old</guid></item>
+    </channel></rss>"""
+
+    class Response:
+        content = xml
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+    monkeypatch.setattr(
+        "app.adapters.google_news_adapter.httpx.get",
+        lambda *args, **kwargs: Response(),
+    )
+    adapter = GoogleNewsRssAdapter(now=datetime(2026, 10, 2, 12, tzinfo=timezone.utc))
+    rows = adapter.fetch(timespan="24h")
+    assert [row.title for row in rows] == ["Fresh market news - Reuters"]
+
+
+def test_prune_stale_supports_dry_run_and_precise_cutoff():
+    db = Session()
+    db.add_all([
+        NewsArticle(
+            external_id="c" * 64, source="test", title="stale", url="https://old",
+            published_at=datetime(2026, 9, 20), raw_hash="d" * 64, raw_metadata={},
+        ),
+        NewsArticle(
+            external_id="e" * 64, source="test", title="fresh", url="https://fresh",
+            published_at=datetime(2026, 10, 1), raw_hash="f" * 64, raw_metadata={},
+        ),
+    ])
+    db.commit()
+    preview = NewsCollectionService.prune_stale(
+        db, max_age_days=7, as_of=date(2026, 10, 2), dry_run=True,
+    )
+    assert preview["articles"] == 1
+    assert db.query(NewsArticle).count() == 2
+    applied = NewsCollectionService.prune_stale(
+        db, max_age_days=7, as_of=date(2026, 10, 2), dry_run=False,
+    )
+    assert applied["articles"] == 1
+    assert db.query(NewsArticle).one().title == "fresh"
+    db.close()

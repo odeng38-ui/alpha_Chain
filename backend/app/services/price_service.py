@@ -12,14 +12,21 @@ import os
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session
 
 from app.adapters.base import AdapterError, BrokerAdapter
 from app.adapters.pykrx_adapter import PykrxAdapter
 from app.adapters.yahoo_adapter import YahooFinanceAdapter
 from app.config import settings
-from app.models.schema import CollectionCheckpoint, DailyPrice, Security
+from app.models.schema import (
+    CollectionCheckpoint,
+    DailyPrice,
+    NewsArticle,
+    NewsClassification,
+    NewsStockCandidate,
+    Security,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +376,25 @@ def incremental_batch_update(
         result=result,
     )
 
+def active_news_candidate_security_ids(
+    db: Session,
+    *,
+    lookback_days: int = 7,
+) -> List[int]:
+    """Return securities linked to recent directional news, without future data."""
+    cutoff = datetime.combine(date.today() - timedelta(days=lookback_days), datetime.min.time())
+    return [row[0] for row in db.query(NewsStockCandidate.security_id).join(
+        NewsClassification,
+        NewsClassification.id == NewsStockCandidate.classification_id,
+    ).join(
+        NewsArticle,
+        NewsArticle.id == NewsClassification.news_article_id,
+    ).filter(
+        NewsStockCandidate.version == "news-link-v1",
+        NewsStockCandidate.expected_direction.in_(("POSITIVE", "NEGATIVE")),
+        NewsArticle.published_at >= cutoff,
+    ).distinct().all()]
+
 def incremental_due_batch_update(
     db: Session,
     *,
@@ -404,9 +430,14 @@ def incremental_due_batch_update(
         ),
     )
     total_candidates = query.count()
+    priority_ids = active_news_candidate_security_ids(db)
+    priority_order = case(
+        (Security.id.in_(priority_ids), 0), else_=1,
+    ) if priority_ids else Security.id
     security_ids = [
-        row[0] for row in query.order_by(Security.id).limit(batch_size).all()
+        row[0] for row in query.order_by(priority_order, Security.id).limit(batch_size).all()
     ]
+    priority_set = set(priority_ids)
     result = incremental_update(db, security_ids=security_ids, adapter=adapter).to_dict()
     processed = len(security_ids)
     return {
@@ -416,5 +447,7 @@ def incremental_due_batch_update(
         "total_candidates": total_candidates,
         "remaining": max(total_candidates - processed, 0),
         "security_ids": security_ids,
+        "priority_candidates": len(priority_ids),
+        "priority_processed": sum(item in priority_set for item in security_ids),
         "has_more": total_candidates > processed,
     }

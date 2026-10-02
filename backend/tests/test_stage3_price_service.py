@@ -14,7 +14,15 @@ from sqlalchemy.pool import StaticPool
 
 from app.adapters.base import BrokerAdapter, OHLCVRecord
 from app.db.session import Base
-from app.models.schema import CollectionCheckpoint, Company, DailyPrice, Security
+from app.models.schema import (
+    CollectionCheckpoint,
+    Company,
+    DailyPrice,
+    NewsArticle,
+    NewsClassification,
+    NewsStockCandidate,
+    Security,
+)
 from app.services import price_service
 
 # ------------------------------------------------------------------ #
@@ -386,3 +394,48 @@ def test_due_batch_retries_failure_after_cooldown(db, monkeypatch):
     )
 
     assert result["security_ids"] == [failed.id]
+
+def test_due_batch_prioritizes_recent_directional_news_candidate(db):
+    create_test_security(db, ticker="000010")
+    priority_company = Company(
+        name="Priority Company", corp_code="87654321", status="ACTIVE",
+        industry_id="FINANCIALS",
+    )
+    db.add(priority_company)
+    db.flush()
+    priority = Security(
+        company_id=priority_company.id, market="KOSPI", ticker="000020",
+        security_type="COMMON",
+    )
+    db.add(priority)
+    db.flush()
+    article = NewsArticle(
+        external_id="9" * 64, source="test", title="Market falls",
+        url="https://example.com/priority", published_at=datetime.utcnow(),
+        raw_hash="8" * 64, raw_metadata={},
+    )
+    db.add(article)
+    db.flush()
+    classification = NewsClassification(
+        news_article_id=article.id, event_kind="MARKET_MOVEMENT",
+        industries=["FINANCIALS"], direction="NEGATIVE", confidence=0.8,
+        matched_keywords=["market", "falls"], rationale="test",
+        review_required=False, version="news-rules-v1",
+    )
+    db.add(classification)
+    db.flush()
+    db.add(NewsStockCandidate(
+        classification_id=classification.id, security_id=priority.id,
+        industry_id="FINANCIALS", expected_direction="NEGATIVE",
+        relevance_score=80, confidence=0.8, rank=1,
+        explanation={"data_quality": "OK"}, version="news-link-v1",
+    ))
+    db.commit()
+
+    result = price_service.incremental_due_batch_update(
+        db, batch_size=1, adapter=MockAdapter([]),
+    )
+
+    assert result["security_ids"] == [priority.id]
+    assert result["priority_candidates"] == 1
+    assert result["priority_processed"] == 1

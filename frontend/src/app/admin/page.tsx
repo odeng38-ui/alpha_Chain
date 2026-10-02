@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -9,6 +9,20 @@ import {
 import { getAdminOverview, reviewRelationship, type AdminOverview, type ReviewItem } from '@/lib/admin-api';
 
 const emptyOverview: AdminOverview = { mapping: null, quality: null, reviews: [], backtests: [], errors: [] };
+
+function formatPercent(value: number | null | undefined, signed = false) {
+  if (value === null || value === undefined) return '—';
+  const percent = value * 100;
+  return `${signed && percent > 0 ? '+' : ''}${percent.toFixed(2)}%`;
+}
+
+function backtestSample(item: AdminOverview['backtests'][number]) {
+  return item.report?.summary?.score_rows ?? item.report?.summary?.directional_candidates;
+}
+
+function backtestObserved(item: AdminOverview['backtests'][number]) {
+  return item.report?.summary?.filled_rows ?? item.report?.metrics?.['1d']?.observations;
+}
 
 function StatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase();
@@ -42,6 +56,7 @@ export default function AdminPage() {
 
   const summary = data.mapping?.summary;
   const failedBacktests = useMemo(() => data.backtests.filter((item) => item.status.toUpperCase().includes('FAIL')).length, [data.backtests]);
+  const newsBacktest = useMemo(() => data.backtests.find((item) => item.score_version === 'news-link-v1') ?? null, [data.backtests]);
 
   async function review(item: ReviewItem, status: 'verified' | 'rejected') {
     const action = status === 'verified' ? '승인' : '반려';
@@ -125,8 +140,33 @@ export default function AdminPage() {
       <section className="admin-card admin-wide" id="backtests">
         <div className="admin-card-head"><div><span>MODEL VALIDATION</span><h2>최근 백테스트</h2></div><Layers3 size={20} /></div>
         {data.backtests.length ? <>
-          <div className="backtest-table"><div className="table-head"><span>이름</span><span>표본</span><span>체결</span><span>상태</span><span>실행일</span></div>{data.backtests.map((item) => <div key={item.id}><strong>{item.name}</strong><span>{item.report?.summary?.score_rows ?? '—'}건</span><span>{item.report?.summary?.filled_rows ?? '—'}건</span><StatusBadge status={item.status} /><time>{new Date(item.created_at).toLocaleString('ko-KR')}</time></div>)}</div>
-          {data.backtests.some((item) => item.status.includes('FAILED')) && <div className="backtest-diagnosis"><AlertTriangle size={18} /><div><strong>수용 기준 미달 원인</strong><p>과거 점수 스냅샷이 1건뿐이고 이후 진입 가격이 없어 체결 표본이 0건입니다. 최소 20건의 홀드아웃 표본이 필요합니다.</p><span>해결 순서: 과거 일봉 적재 → 과거 날짜별 점수 생성 → 점수일 이후 20거래일 확보 → 백테스트 재실행</span></div></div>}
+          {newsBacktest?.report?.metrics && <div className="news-backtest-monitor">
+            <div className="news-monitor-head">
+              <div><strong>뉴스 후보 성과 관측</strong><small>최근 자동 실행 · {new Date(newsBacktest.created_at).toLocaleString('ko-KR')}</small></div>
+              <StatusBadge status={newsBacktest.status} />
+            </div>
+            <div className="news-horizon-grid">
+              {(['1d', '5d', '20d'] as const).map((horizon) => {
+                const metric = newsBacktest.report?.metrics?.[horizon];
+                const acceptance = newsBacktest.report?.horizon_acceptance?.[horizon];
+                if (!metric) return null;
+                return <article key={horizon}>
+                  <header><strong>{horizon.toUpperCase()}</strong><StatusBadge status={acceptance?.status ?? 'UNKNOWN'} /></header>
+                  <div className="coverage-line"><span style={{ width: `${Math.min(metric.outcome_coverage_rate * 100, 100)}%` }} /></div>
+                  <dl>
+                    <div><dt>관측률</dt><dd>{formatPercent(metric.outcome_coverage_rate)}</dd></div>
+                    <div><dt>관측/전체</dt><dd>{metric.observations}/{metric.eligible_candidates}</dd></div>
+                    <div><dt>대기</dt><dd>{metric.pending_candidates}건</dd></div>
+                    <div><dt>방향 적중률</dt><dd>{formatPercent(metric.direction_hit_rate)}</dd></div>
+                    <div><dt>시장 초과수익</dt><dd>{formatPercent(metric.average_market_excess, true)}</dd></div>
+                  </dl>
+                  {acceptance?.reasons.length ? <p>{acceptance.reasons.map((reason) => reason.replaceAll('_', ' ')).join(' · ')}</p> : <p className="ready">판정 조건 충족</p>}
+                </article>;
+              })}
+            </div>
+          </div>}
+          <div className="backtest-table"><div className="table-head"><span>이름</span><span>표본</span><span>관측</span><span>상태</span><span>실행일</span></div>{data.backtests.map((item) => <div key={item.id}><strong>{item.name}</strong><span>{backtestSample(item) ?? '—'}건</span><span>{backtestObserved(item) ?? '—'}건</span><StatusBadge status={item.status} /><time>{new Date(item.created_at).toLocaleString('ko-KR')}</time></div>)}</div>
+          {newsBacktest?.status.includes('FAILED') && <div className="backtest-diagnosis"><AlertTriangle size={18} /><div><strong>뉴스 후보 수용 기준 미달</strong><p>{newsBacktest.report?.horizon_acceptance?.['1d']?.reasons.join(' · ') || '상세 실패 사유를 확인해야 합니다.'}</p><span>관측률과 시장 초과수익을 함께 확인한 뒤 후보 필터를 조정하세요.</span></div></div>}
         </> : <div className="admin-empty">실행된 백테스트가 없습니다.</div>}
       </section>
     </section>

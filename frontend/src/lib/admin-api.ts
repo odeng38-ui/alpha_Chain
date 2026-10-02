@@ -1,4 +1,4 @@
-﻿export type MappingReport = {
+export type MappingReport = {
   summary: {
     total_common_securities: number;
     mapped_common_securities: number;
@@ -31,14 +31,30 @@ export type ReviewItem = {
   evidences: Array<{ text: string; source_document: string; source_url: string | null; published_at: string }>;
 };
 
+export type NewsBacktestMetric = {
+  observations: number;
+  eligible_candidates: number;
+  pending_candidates: number;
+  outcome_coverage_rate: number;
+  direction_hit_rate: number | null;
+  average_market_excess: number | null;
+  average_industry_excess: number | null;
+};
+
 export type BacktestReport = {
   summary?: {
-    score_rows: number;
-    filled_rows: number;
-    unfilled_rows: number;
-    unfilled_rate: number;
-    unfilled_by_reason: Record<string, number>;
+    score_rows?: number;
+    filled_rows?: number;
+    unfilled_rows?: number;
+    unfilled_rate?: number;
+    unfilled_by_reason?: Record<string, number>;
+    directional_candidates?: number;
+    transaction_cost?: number;
+    minimum_observations?: number;
+    minimum_outcome_coverage?: number;
   };
+  metrics?: Record<string, NewsBacktestMetric>;
+  horizon_acceptance?: Record<string, { status: string; reasons: string[] }>;
   failure_conditions?: string[];
 };
 

@@ -21,6 +21,7 @@ from app.models.schema import (
 class NewsCandidateBacktestService:
     version = "news-link-v1"
     minimum_observations = 30
+    minimum_outcome_coverage = 0.80
     transaction_cost = 0.003
 
     @staticmethod
@@ -213,10 +214,19 @@ class NewsCandidateBacktestService:
                     outcome[field] = round(outcome[field], 10)
                 outcomes.append(outcome)
             metrics[key] = self._metrics(outcomes)
+            outcome_coverage = len(outcomes) / len(samples) if samples else 0.0
+            metrics[key]["eligible_candidates"] = len(samples)
+            metrics[key]["pending_candidates"] = len(samples) - len(outcomes)
+            metrics[key]["outcome_coverage_rate"] = round(outcome_coverage, 6)
             diagnostics[key] = self._diagnostics(samples, key)
+            readiness_reasons = []
             if len(outcomes) < self.minimum_observations:
+                readiness_reasons.append(f"OBSERVATIONS_BELOW_{self.minimum_observations}")
+            if outcome_coverage < self.minimum_outcome_coverage:
+                readiness_reasons.append("OUTCOME_COVERAGE_BELOW_80")
+            if readiness_reasons:
                 status = "INSUFFICIENT_SAMPLE"
-                reasons = [f"OBSERVATIONS_BELOW_{self.minimum_observations}"]
+                reasons = readiness_reasons
             else:
                 reasons = []
                 if metrics[key]["direction_hit_rate"] < 0.55:
@@ -241,6 +251,7 @@ class NewsCandidateBacktestService:
                 "directional_candidates": len(samples),
                 "transaction_cost": self.transaction_cost,
                 "minimum_observations": self.minimum_observations,
+                "minimum_outcome_coverage": self.minimum_outcome_coverage,
             },
             "metrics": metrics, "diagnostics": diagnostics,
             "horizon_acceptance": horizon_acceptance,

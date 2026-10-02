@@ -101,6 +101,8 @@ def test_backtest_uses_next_korean_session_open_and_marks_small_sample():
     assert sample["confidence"] == 0.8
     assert sample["event_kind"] == "MARKET_MOVEMENT"
     assert run.report["metrics"]["1d"]["observations"] == 1
+    assert run.report["metrics"]["1d"]["outcome_coverage_rate"] == 1.0
+    assert run.report["metrics"]["1d"]["pending_candidates"] == 0
     diagnostics = run.report["diagnostics"]["1d"]
     assert diagnostics["rank_band"]["01-05"]["observations"] == 1
     assert diagnostics["relevance_band"]["80+"]["observations"] == 1
@@ -138,4 +140,46 @@ def test_benchmark_uses_full_market_and_same_industry_universe():
     assert result["market_count"] == 2
     assert result["market_return"] == pytest.approx(0.01)
     assert result["industry_returns"]["FINANCIALS"] == pytest.approx(0.01)
+    db.close()
+
+def test_backtest_waits_when_outcome_coverage_is_too_low():
+    db = Session()
+    candidate = add_candidate_dataset(db)
+    company = Company(
+        name="Pending", corp_code="00000002", status="ACTIVE",
+        industry_id="FINANCIALS",
+    )
+    db.add(company)
+    db.flush()
+    security = Security(
+        company_id=company.id, market="KOSPI", ticker="000002",
+        security_type="COMMON",
+    )
+    db.add(security)
+    db.flush()
+    db.add(NewsStockCandidate(
+        classification_id=candidate.classification_id, security_id=security.id,
+        industry_id="FINANCIALS", expected_direction="POSITIVE",
+        relevance_score=79, confidence=0.8, rank=2,
+        explanation={"data_quality": "OK"}, version="news-link-v1",
+    ))
+    db.add(NewsCandidateValidationRun(
+        version="news-candidate-acceptance-v1", status="PASSED",
+        as_of=date(2026, 1, 10), report={}, evaluated_at=datetime(2026, 1, 10),
+    ))
+    db.commit()
+    service = NewsCandidateBacktestService()
+    service.minimum_observations = 1
+
+    run = service.run(db, "coverage gate", horizons=(1,))
+
+    metrics = run.report["metrics"]["1d"]
+    assert metrics["observations"] == 1
+    assert metrics["eligible_candidates"] == 2
+    assert metrics["pending_candidates"] == 1
+    assert metrics["outcome_coverage_rate"] == 0.5
+    assert run.report["horizon_acceptance"]["1d"] == {
+        "status": "INSUFFICIENT_SAMPLE",
+        "reasons": ["OUTCOME_COVERAGE_BELOW_80"],
+    }
     db.close()

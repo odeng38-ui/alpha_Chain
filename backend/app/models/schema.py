@@ -440,3 +440,22 @@ class NewsArticle(Base):
     raw_metadata = Column(JSON, nullable=False, default=dict)
     collected_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class NewsClassification(Base):
+    __tablename__ = "news_classification"
+    __table_args__ = (
+        Index("uq_news_classification_version", "news_article_id", "version", unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    news_article_id = Column(Integer, ForeignKey("news_article.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_kind = Column(String(50), nullable=False, index=True)
+    industries = Column(JSON, nullable=False, default=list)
+    direction = Column(String(20), nullable=False, index=True)
+    confidence = Column(Float, nullable=False)
+    matched_keywords = Column(JSON, nullable=False, default=list)
+    rationale = Column(Text, nullable=False)
+    review_required = Column(Boolean, nullable=False, default=False)
+    version = Column(String(30), nullable=False)
+    classified_at = Column(DateTime, nullable=False, default=datetime.utcnow)

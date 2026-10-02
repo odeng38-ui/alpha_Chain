@@ -4,8 +4,9 @@ from sqlalchemy.orm import Session
 from app.adapters.gdelt_news_adapter import GdeltNewsAdapter
 from app.adapters.google_news_adapter import FallbackNewsAdapter, GoogleNewsRssAdapter
 from app.db.session import get_db
-from app.models.schema import NewsArticle
+from app.models.schema import NewsArticle, NewsClassification
 from app.security import require_admin
+from app.services.news_classification_service import NewsClassificationService
 from app.services.news_collection_service import NewsCollectionService
 
 router = APIRouter(prefix="/news", tags=["News"])
@@ -33,3 +34,36 @@ def list_news(domain: str | None = None,
         "source_country": row.source_country,
         "published_at": row.published_at.isoformat(), "image_url": row.image_url,
     } for row in rows]}
+
+@router.post("/classify", dependencies=[Depends(require_admin)])
+def classify_news(limit: int = Query(100, ge=1, le=500),
+                  reclassify: bool = False,
+                  db: Session = Depends(get_db)):
+    return NewsClassificationService().classify_pending(db, limit, reclassify)
+
+
+@router.get("/classifications")
+def list_classifications(event_kind: str | None = None,
+                         direction: str | None = None,
+                         review_required: bool | None = None,
+                         limit: int = Query(100, ge=1, le=500),
+                         db: Session = Depends(get_db)):
+    query = db.query(NewsClassification, NewsArticle).join(
+        NewsArticle, NewsArticle.id == NewsClassification.news_article_id
+    )
+    if event_kind:
+        query = query.filter(NewsClassification.event_kind == event_kind.upper())
+    if direction:
+        query = query.filter(NewsClassification.direction == direction.upper())
+    if review_required is not None:
+        query = query.filter(NewsClassification.review_required == review_required)
+    rows = query.order_by(NewsArticle.published_at.desc()).limit(limit).all()
+    return {"count": len(rows), "data": [{
+        "article_id": article.id, "title": article.title, "url": article.url,
+        "published_at": article.published_at.isoformat(),
+        "event_kind": item.event_kind, "industries": item.industries,
+        "direction": item.direction, "confidence": item.confidence,
+        "matched_keywords": item.matched_keywords,
+        "rationale": item.rationale, "review_required": item.review_required,
+        "version": item.version,
+    } for item, article in rows]}

@@ -419,3 +419,24 @@ class EventImpactCandidate(Base):
     version = Column(String(30), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class NewsArticle(Base):
+    __tablename__ = "news_article"
+    __table_args__ = (
+        Index("ix_news_article_published_source", "published_at", "source"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    external_id = Column(String(64), nullable=False, unique=True, index=True)
+    source = Column(String(50), nullable=False, index=True)
+    title = Column(String(1000), nullable=False)
+    url = Column(String(2000), nullable=False)
+    domain = Column(String(255), nullable=True, index=True)
+    language = Column(String(50), nullable=True)
+    source_country = Column(String(100), nullable=True, index=True)
+    published_at = Column(DateTime, nullable=False, index=True)
+    image_url = Column(String(2000), nullable=True)
+    raw_hash = Column(String(64), nullable=False)
+    raw_metadata = Column(JSON, nullable=False, default=dict)
+    collected_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

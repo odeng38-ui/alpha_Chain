@@ -50,7 +50,8 @@ def test_event_backtest_is_point_in_time_and_reproducible():
     assert first.report["summary"] == {"events": 2, "candidate_rows": 2, "outcome_observations": 4}
     assert first.report["metrics"]["1d"]["direction_hit_rate"] == 1.0
     assert first.status == "FAILED_ACCEPTANCE"
-    assert first.report["failure_conditions"] == ["INSUFFICIENT_OUTCOMES"]
+    assert first.report["horizon_acceptance"]["1d"]["status"] == "FAILED"
+    assert "INSUFFICIENT_OUTCOMES_1D" in first.report["failure_conditions"]
     assert first.report["bias_checklist"]["pre_event_prices_only"] is True
     assert first.report["samples"][0]["available_at"] == "2025-01-03T00:00:00"
     assert db.query(BacktestRun).count() == 2
@@ -59,3 +60,16 @@ def test_event_backtest_is_point_in_time_and_reproducible():
 def test_static_event_backtest_route_precedes_dynamic_run_route():
     paths = [route.path for route in backtests.router.routes]
     assert paths.index("/backtests/event-impact") < paths.index("/backtests/{run_id}")
+
+def test_horizon_acceptance_allows_five_day_model_only():
+    metrics = {
+        "1d": {"observations": 30, "direction_hit_rate": 0.33,
+               "average_aligned_return": -0.006},
+        "5d": {"observations": 29, "direction_hit_rate": 0.62,
+               "average_aligned_return": 0.015},
+    }
+    acceptance, failures, status = EventImpactBacktestService._acceptance(metrics)
+    assert acceptance["1d"]["status"] == "FAILED"
+    assert acceptance["5d"]["status"] == "PASSED"
+    assert status == "PARTIAL_ACCEPTANCE"
+    assert "DIRECTION_HIT_RATE_BELOW_50_1D" in failures

@@ -47,6 +47,27 @@ class EventImpactBacktestService:
         }
 
     @staticmethod
+    def _acceptance(metrics):
+        horizon_acceptance = {}
+        failure_conditions = []
+        for key, values in metrics.items():
+            conditions = []
+            if values["observations"] < 10:
+                conditions.append(f"INSUFFICIENT_OUTCOMES_{key.upper()}")
+            if values["observations"] and values["direction_hit_rate"] < 0.5:
+                conditions.append(f"DIRECTION_HIT_RATE_BELOW_50_{key.upper()}")
+            if values["observations"] and values["average_aligned_return"] <= 0:
+                conditions.append(f"NON_POSITIVE_ALIGNED_RETURN_{key.upper()}")
+            horizon_acceptance[key] = {
+                "status": "PASSED" if not conditions else "FAILED",
+                "failure_conditions": conditions,
+            }
+            failure_conditions.extend(conditions)
+        passed = sum(item["status"] == "PASSED" for item in horizon_acceptance.values())
+        status = ("COMPLETED" if passed == len(horizon_acceptance)
+                  else "PARTIAL_ACCEPTANCE" if passed else "FAILED_ACCEPTANCE")
+        return horizon_acceptance, failure_conditions, status
+    @staticmethod
     def _metrics(rows):
         if not rows:
             return {"observations": 0, "average_raw_return": None,
@@ -117,20 +138,14 @@ class EventImpactBacktestService:
             json.dumps(frozen, sort_keys=True, ensure_ascii=False).encode()
         ).hexdigest()
         observations = sum(item["observations"] for item in metrics.values())
-        failure_conditions = []
-        if observations < 20:
-            failure_conditions.append("INSUFFICIENT_OUTCOMES")
-        for key, values in metrics.items():
-            if values["observations"] and values["direction_hit_rate"] < 0.5:
-                failure_conditions.append(f"DIRECTION_HIT_RATE_BELOW_50_{key.upper()}")
-            if values["observations"] and values["average_aligned_return"] <= 0:
-                failure_conditions.append(f"NON_POSITIVE_ALIGNED_RETURN_{key.upper()}")
+        horizon_acceptance, failure_conditions, run_status = self._acceptance(metrics)
         report = {
             "summary": {"events": len(events), "candidate_rows": len(samples),
                         "outcome_observations": observations},
             "metrics": metrics,
             "samples": samples,
             "failure_conditions": failure_conditions,
+            "horizon_acceptance": horizon_acceptance,
             "bias_checklist": {
                 "point_in_time_candidates": True,
                 "pre_event_prices_only": True,
@@ -146,7 +161,7 @@ class EventImpactBacktestService:
             config={"max_events": max_events, "candidates_per_event": candidates_per_event,
                     "horizons": list(horizons)},
             dataset_hash=dataset_hash, parameter_adjustments=0,
-            status="FAILED_ACCEPTANCE" if report["failure_conditions"] else "COMPLETED",
+            status=run_status,
             report=report, completed_at=datetime.utcnow(),
         )
         db.add(run)

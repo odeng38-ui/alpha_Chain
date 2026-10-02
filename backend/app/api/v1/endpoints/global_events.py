@@ -5,7 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.adapters.us_market_adapter import YahooUSMarketAdapter
 from app.db.session import get_db
-from app.models.schema import Company, EventImpactCandidate, GlobalEvent, Security
+from app.models.schema import (
+    BacktestRun,
+    Company,
+    EventImpactCandidate,
+    GlobalEvent,
+    Security,
+)
 from app.security import require_admin
 from app.services.event_impact_service import (
     EventImpactService,
@@ -65,8 +71,38 @@ def generate_impact_candidates_v4(event_id: int, horizon: int = Query(1),
                                   db: Session = Depends(get_db)):
     return EventImpactV4Service(horizon).generate(db, event_id, limit)
 
+@router.get("/{event_id}/recommendations")
+def event_recommendations(event_id: int, limit: int = Query(20, ge=1, le=100),
+                          db: Session = Depends(get_db)):
+    latest_run = db.query(BacktestRun).filter(
+        BacktestRun.score_version == "impact-v4",
+    ).order_by(BacktestRun.completed_at.desc()).first()
+    acceptance = ((latest_run.report or {}).get("horizon_acceptance", {}).get("5d", {})
+                  if latest_run else {})
+    approved = acceptance.get("status") == "PASSED"
+    rows = db.query(EventImpactCandidate, Security, Company).join(
+        Security, Security.id == EventImpactCandidate.security_id
+    ).join(Company, Company.id == Security.company_id).filter(
+        EventImpactCandidate.event_id == event_id,
+        EventImpactCandidate.version == "impact-v4-5d",
+    ).order_by(EventImpactCandidate.rank).limit(limit).all()
+    return {
+        "event_id": event_id, "model_version": "impact-v4-5d",
+        "model_approved": approved,
+        "acceptance_run_id": latest_run.id if latest_run else None,
+        "acceptance": acceptance, "count": len(rows),
+        "data": [{
+            "rank": candidate.rank, "security_id": security.id,
+            "ticker": security.ticker, "company_name": company.name,
+            "market": security.market, "industry_id": candidate.industry_id,
+            "impact_score": candidate.impact_score,
+            "confidence": candidate.confidence,
+            "explanation": candidate.explanation,
+        } for candidate, security, company in rows],
+    }
+
 @router.get("/{event_id}/impact-candidates")
-def list_impact_candidates(event_id: int, version: str = "impact-v4-1d",
+def list_impact_candidates(event_id: int, version: str = "impact-v4-5d",
                            limit: int = Query(100, ge=1, le=500),
                            db: Session = Depends(get_db)):
     rows = db.query(EventImpactCandidate, Security, Company).join(

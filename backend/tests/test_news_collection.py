@@ -145,3 +145,29 @@ def test_prune_stale_supports_dry_run_and_precise_cutoff():
     assert applied["articles"] == 1
     assert db.query(NewsArticle).one().title == "fresh"
     db.close()
+
+def test_fallback_adapter_uses_secondary_when_primary_returns_empty():
+    from app.adapters.google_news_adapter import FallbackNewsAdapter
+
+    class EmptyAdapter:
+        def fetch(self, timespan="24h", max_records=100):
+            return []
+
+    class SecondaryAdapter:
+        def fetch(self, timespan="24h", max_records=100):
+            return [timespan, max_records]
+
+    result = FallbackNewsAdapter(EmptyAdapter(), SecondaryAdapter()).fetch(
+        timespan="7d", max_records=25,
+    )
+
+    assert result == ["7d", 25]
+
+
+def test_google_news_default_query_targets_wall_street_sources():
+    from app.adapters.google_news_adapter import GoogleNewsRssAdapter
+
+    query = GoogleNewsRssAdapter.default_query
+    assert '"Wall Street"' in query
+    assert "Reuters" in query
+    assert "when:1d" in query

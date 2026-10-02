@@ -18,12 +18,9 @@ class GoogleNewsRssAdapter:
         "The Associated Press", "AP News", "The Hill",
     }
     default_query = (
-        '("Federal Reserve" OR "interest rates" OR inflation OR recession '
-        'OR tariffs OR sanctions OR semiconductor OR "artificial intelligence" '
-        'OR "crude oil" OR "corporate earnings") '
-        '(stocks OR market OR economy OR trade OR technology) '
-        '(source:Reuters OR source:CNBC OR source:Bloomberg OR source:Axios '
-        'OR source:"Associated Press" OR source:"The Hill") when:1d'
+        '"Wall Street" stocks '
+        '(Reuters OR CNBC OR Bloomberg OR Axios OR "Associated Press" OR "The Hill") '
+        'when:1d'
     )
 
     def __init__(self, timeout: float = 30.0, now: datetime | None = None):
@@ -108,6 +105,9 @@ class FallbackNewsAdapter:
 
     def fetch(self, timespan: str = "24h", max_records: int = 100):
         try:
-            return self.primary.fetch(timespan=timespan, max_records=max_records)
+            records = self.primary.fetch(timespan=timespan, max_records=max_records)
         except AdapterError:
-            return self.fallback.fetch(timespan=timespan, max_records=max_records)
+            records = []
+        if records:
+            return records
+        return self.fallback.fetch(timespan=timespan, max_records=max_records)

@@ -96,7 +96,15 @@ def test_backtest_uses_next_korean_session_open_and_marks_small_sample():
     assert sample["outcomes"]["1d"]["raw_return"] == pytest.approx(0.02)
     assert sample["outcomes"]["5d"]["exit_date"] == "2026-01-07"
     assert sample["outcomes"]["20d"] is None
+    assert sample["rank"] == 1
+    assert sample["relevance_score"] == 80
+    assert sample["confidence"] == 0.8
+    assert sample["event_kind"] == "MARKET_MOVEMENT"
     assert run.report["metrics"]["1d"]["observations"] == 1
+    diagnostics = run.report["diagnostics"]["1d"]
+    assert diagnostics["rank_band"]["01-05"]["observations"] == 1
+    assert diagnostics["relevance_band"]["80+"]["observations"] == 1
+    assert diagnostics["event_kind"]["MARKET_MOVEMENT"]["observations"] == 1
     assert run.report["horizon_acceptance"]["1d"]["status"] == "INSUFFICIENT_SAMPLE"
     db.close()
 

@@ -11,3 +11,5 @@ node_modules/
 *.db
 coverage.xml
 backend/data/
+backend/test-temp/
+backend/pytest-run-*/

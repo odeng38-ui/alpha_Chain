@@ -110,6 +110,33 @@ class NewsCandidateBacktestService:
             "average_industry_excess": round(mean(row["aligned_industry_excess"] for row in rows), 8),
         }
 
+    def _diagnostics(self, samples, horizon_key):
+        dimensions = {
+            "rank_band": lambda sample: (
+                "01-05" if sample["rank"] <= 5 else
+                "06-10" if sample["rank"] <= 10 else "11+"
+            ),
+            "relevance_band": lambda sample: (
+                "80+" if sample["relevance_score"] >= 80 else
+                "70-79.99" if sample["relevance_score"] >= 70 else "below-70"
+            ),
+            "event_kind": lambda sample: sample["event_kind"],
+            "industry": lambda sample: sample["industry_id"],
+            "direction": lambda sample: sample["direction"],
+        }
+        report = {}
+        for dimension, classifier in dimensions.items():
+            groups = defaultdict(list)
+            for sample in samples:
+                outcome = sample["outcomes"].get(horizon_key)
+                if outcome is not None:
+                    groups[classifier(sample)].append(outcome)
+            report[dimension] = {
+                label: self._metrics(outcomes)
+                for label, outcomes in sorted(groups.items())
+            }
+        return report
+
     def run(self, db: Session, name: str, horizons=(1, 5, 20),
             candidate_limit: int = 500) -> BacktestRun:
         validation = db.query(NewsCandidateValidationRun).order_by(
@@ -136,6 +163,10 @@ class NewsCandidateBacktestService:
                 "security_id": security.id, "ticker": security.ticker,
                 "industry_id": candidate.industry_id,
                 "direction": candidate.expected_direction,
+                "event_kind": classification.event_kind,
+                "rank": candidate.rank,
+                "relevance_score": candidate.relevance_score,
+                "confidence": candidate.confidence,
                 "published_at": article.published_at.isoformat(),
                 "outcomes": {},
             }
@@ -145,6 +176,7 @@ class NewsCandidateBacktestService:
                 )
             samples.append(sample)
         metrics = {}
+        diagnostics = {}
         horizon_acceptance = {}
         for horizon in horizons:
             key = f"{horizon}d"
@@ -181,6 +213,7 @@ class NewsCandidateBacktestService:
                     outcome[field] = round(outcome[field], 10)
                 outcomes.append(outcome)
             metrics[key] = self._metrics(outcomes)
+            diagnostics[key] = self._diagnostics(samples, key)
             if len(outcomes) < self.minimum_observations:
                 status = "INSUFFICIENT_SAMPLE"
                 reasons = [f"OBSERVATIONS_BELOW_{self.minimum_observations}"]
@@ -209,7 +242,8 @@ class NewsCandidateBacktestService:
                 "transaction_cost": self.transaction_cost,
                 "minimum_observations": self.minimum_observations,
             },
-            "metrics": metrics, "horizon_acceptance": horizon_acceptance,
+            "metrics": metrics, "diagnostics": diagnostics,
+            "horizon_acceptance": horizon_acceptance,
             "samples": samples,
             "bias_checklist": {
                 "candidate_acceptance_passed": True,

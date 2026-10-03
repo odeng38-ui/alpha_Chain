@@ -114,7 +114,11 @@ def list_stock_candidates(article_id: int | None = None,
     ).limit(limit).all()
     return {"count": len(rows), "data": [{
         "article_id": article.id, "title": article.title,
+        "article_url": article.url,
+        "published_at": article.published_at.isoformat(),
+        "source": article.source,
         "event_kind": classification.event_kind,
+        "classification_rationale": classification.rationale,
         "expected_direction": candidate.expected_direction,
         "rank": candidate.rank, "relevance_score": candidate.relevance_score,
         "confidence": candidate.confidence, "ticker": security.ticker,

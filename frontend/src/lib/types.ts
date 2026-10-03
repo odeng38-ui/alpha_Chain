@@ -51,3 +51,34 @@ export type GraphEdge = {
   explanation: string;
   evidences: { id: number; text: string; location: string | null; source_document: string; source_url: string | null; published_at: string }[];
 };
+export type NewsStockCandidate = {
+  article_id: number;
+  title: string;
+  article_url: string;
+  published_at: string;
+  source: string;
+  event_kind: string;
+  classification_rationale: string;
+  expected_direction: 'POSITIVE' | 'NEGATIVE' | 'MIXED' | 'NEUTRAL';
+  rank: number;
+  relevance_score: number;
+  confidence: number;
+  ticker: string;
+  market: string;
+  company_name: string;
+  industry_id: string;
+  explanation: {
+    matched_industry?: string;
+    industry_relevance?: number;
+    liquidity_percentile?: number;
+    price_trade_date?: string | null;
+    data_quality?: string;
+    selection_strategy?: string;
+  };
+  version: string;
+};
+
+export type NewsImpactData = {
+  count: number;
+  data: NewsStockCandidate[];
+};

@@ -158,4 +158,8 @@ def test_candidate_list_endpoint_query_executes():
     )
     assert response["count"] == 1
     assert response["data"][0]["ticker"] == "000006"
+    assert response["data"][0]["article_url"] == article.url
+    assert response["data"][0]["published_at"] == article.published_at.isoformat()
+    assert response["data"][0]["source"] == article.source
+    assert response["data"][0]["classification_rationale"]
     db.close()

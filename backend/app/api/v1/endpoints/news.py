@@ -7,6 +7,7 @@ from app.adapters.gdelt_news_adapter import GdeltNewsAdapter
 from app.adapters.google_news_adapter import FallbackNewsAdapter, GoogleNewsRssAdapter
 from app.db.session import get_db
 from app.models.schema import (
+    BacktestRun,
     Company,
     NewsArticle,
     NewsCandidateValidationRun,
@@ -126,6 +127,47 @@ def list_stock_candidates(article_id: int | None = None,
         "industry_id": candidate.industry_id,
         "explanation": candidate.explanation, "version": candidate.version,
     } for candidate, classification, article, security, company in rows]}
+
+@router.get("/impact-status")
+def news_impact_status(db: Session = Depends(get_db)):
+    validation = db.query(NewsCandidateValidationRun).order_by(
+        NewsCandidateValidationRun.evaluated_at.desc(),
+        NewsCandidateValidationRun.id.desc(),
+    ).first()
+    backtest = db.query(BacktestRun).filter(
+        BacktestRun.score_version == "news-link-v1",
+    ).order_by(BacktestRun.created_at.desc(), BacktestRun.id.desc()).first()
+    report = backtest.report if backtest and backtest.report else {}
+    metric = (report.get("metrics") or {}).get("1d") or {}
+    acceptance = (report.get("horizon_acceptance") or {}).get("1d") or {}
+    if backtest is None:
+        status = "NOT_RUN"
+    elif backtest.status == "PASSED":
+        status = "VERIFIED"
+    elif backtest.status == "FAILED":
+        status = "REJECTED"
+    else:
+        status = "VALIDATING"
+    return {
+        "status": status,
+        "candidate_quality_status": validation.status if validation else "NOT_RUN",
+        "backtest_status": backtest.status if backtest else "NOT_RUN",
+        "backtest_run_id": backtest.id if backtest else None,
+        "updated_at": backtest.created_at.isoformat() if backtest else None,
+        "one_day": {
+            "observations": metric.get("observations", 0),
+            "eligible_candidates": metric.get("eligible_candidates", 0),
+            "pending_candidates": metric.get("pending_candidates", 0),
+            "outcome_coverage_rate": metric.get("outcome_coverage_rate", 0.0),
+            "minimum_outcome_coverage": (report.get("summary") or {}).get(
+                "minimum_outcome_coverage", 0.8,
+            ),
+            "direction_hit_rate": metric.get("direction_hit_rate"),
+            "average_market_excess": metric.get("average_market_excess"),
+            "acceptance_status": acceptance.get("status", "NOT_RUN"),
+            "reasons": acceptance.get("reasons", []),
+        },
+    }
 
 @router.post("/stock-candidates/validate", dependencies=[Depends(require_admin)])
 def validate_stock_candidates(as_of: date | None = None,

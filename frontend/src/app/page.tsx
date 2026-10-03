@@ -7,8 +7,8 @@ import { CompanyDetail } from '@/components/company-detail';
 import { MarketDashboard } from '@/components/market-dashboard';
 import { NewsImpact } from '@/components/news-impact';
 import { ErrorState, LoadingState } from '@/components/ui-state';
-import { getCompanies, getCompanyDetail, getDashboard, getGraph, getNewsImpacts } from '@/lib/api';
-import type { CompanyDetailData, CompanySummary, DashboardData, GraphData, GraphEdge, NewsStockCandidate } from '@/lib/types';
+import { getCompanies, getCompanyDetail, getDashboard, getGraph, getNewsImpacts, getNewsImpactStatus } from '@/lib/api';
+import type { CompanyDetailData, CompanySummary, DashboardData, GraphData, GraphEdge, NewsImpactStatus, NewsStockCandidate } from '@/lib/types';
 
 type View = 'market' | 'news' | 'company' | 'chain';
 const navigation = [
@@ -26,6 +26,7 @@ export default function Home() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [newsCandidates, setNewsCandidates] = useState<NewsStockCandidate[]>([]);
+  const [newsImpactStatus, setNewsImpactStatus] = useState<NewsImpactStatus | null>(null);
   const [detail, setDetail] = useState<CompanyDetailData | null>(null);
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
@@ -40,12 +41,13 @@ export default function Home() {
     setLoading(true);
     setError(null);
     try {
-      const [dashboardData, companyData, newsData] = await Promise.all([
-        getDashboard(asOf), getCompanies(), getNewsImpacts(),
+      const [dashboardData, companyData, newsData, impactStatus] = await Promise.all([
+        getDashboard(asOf), getCompanies(), getNewsImpacts(), getNewsImpactStatus().catch(() => null),
       ]);
       setDashboard(dashboardData);
       setCompanies(companyData.data);
       setNewsCandidates(newsData.data);
+      setNewsImpactStatus(impactStatus);
       setSelectedCompanyId((current) => current ?? companyData.data[0]?.company_id ?? null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '데이터를 불러오는 중 오류가 발생했습니다.');
@@ -145,7 +147,7 @@ export default function Home() {
           {loading ? <LoadingState />
             : error ? <ErrorState message={error} retry={() => setRefreshKey((value) => value + 1)} />
               : view === 'market' && dashboard ? <MarketDashboard data={dashboard} onSelectCompany={(companyId) => { setSelectedCompanyId(companyId); setView('company'); }} />
-                : view === 'news' ? <NewsImpact candidates={newsCandidates} onSelectTicker={(ticker) => {
+                : view === 'news' ? <NewsImpact candidates={newsCandidates} status={newsImpactStatus} onSelectTicker={(ticker) => {
                     const company = companies.find((item) => item.securities.some((security) => security.ticker === ticker));
                     if (company) { setSelectedCompanyId(company.company_id); setView('company'); }
                   }} />

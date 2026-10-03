@@ -82,3 +82,21 @@ export type NewsImpactData = {
   count: number;
   data: NewsStockCandidate[];
 };
+export type NewsImpactStatus = {
+  status: 'NOT_RUN' | 'VALIDATING' | 'VERIFIED' | 'REJECTED';
+  candidate_quality_status: string;
+  backtest_status: string;
+  backtest_run_id: number | null;
+  updated_at: string | null;
+  one_day: {
+    observations: number;
+    eligible_candidates: number;
+    pending_candidates: number;
+    outcome_coverage_rate: number;
+    minimum_outcome_coverage: number;
+    direction_hit_rate: number | null;
+    average_market_excess: number | null;
+    acceptance_status: string;
+    reasons: string[];
+  };
+};

@@ -6,12 +6,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api.v1.endpoints.news import list_stock_candidates
+from app.api.v1.endpoints.news import list_stock_candidates, news_impact_status
 from app.db.session import Base
 from app.models.schema import (
+    BacktestRun,
     Company,
     DailyPrice,
     NewsArticle,
+    NewsCandidateValidationRun,
     NewsClassification,
     NewsStockCandidate,
     Security,
@@ -162,4 +164,39 @@ def test_candidate_list_endpoint_query_executes():
     assert response["data"][0]["published_at"] == article.published_at.isoformat()
     assert response["data"][0]["source"] == article.source
     assert response["data"][0]["classification_rationale"]
+    db.close()
+
+def test_news_impact_status_exposes_readiness_without_internal_samples():
+    db = Session()
+    db.add(NewsCandidateValidationRun(
+        version="news-candidate-acceptance-v1", status="PASSED",
+        as_of=date(2026, 10, 2), report={}, evaluated_at=datetime(2026, 10, 2),
+    ))
+    db.add(BacktestRun(
+        name="daily", score_version="news-link-v1", horizon="1d,5d,20d",
+        config={}, dataset_hash="a" * 64, status="INSUFFICIENT_SAMPLE",
+        report={
+            "summary": {"minimum_outcome_coverage": 0.8},
+            "metrics": {"1d": {
+                "observations": 38, "eligible_candidates": 120,
+                "pending_candidates": 82, "outcome_coverage_rate": 0.316667,
+                "direction_hit_rate": 0.578947,
+                "average_market_excess": -0.00093937,
+            }},
+            "horizon_acceptance": {"1d": {
+                "status": "INSUFFICIENT_SAMPLE",
+                "reasons": ["OUTCOME_COVERAGE_BELOW_80"],
+            }},
+        },
+    ))
+    db.commit()
+
+    response = news_impact_status(db)
+
+    assert response["status"] == "VALIDATING"
+    assert response["candidate_quality_status"] == "PASSED"
+    assert response["one_day"]["observations"] == 38
+    assert response["one_day"]["pending_candidates"] == 82
+    assert response["one_day"]["outcome_coverage_rate"] == pytest.approx(0.316667)
+    assert "samples" not in response
     db.close()

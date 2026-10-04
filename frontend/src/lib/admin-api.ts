@@ -74,9 +74,22 @@ export type OperationsHealth = {
   checked_at: string;
   summary: {
     failed_jobs: number;
+    action_required_failures: number;
     stale_or_missing_sources: number;
     automation_issues: number;
     model_degraded: boolean;
+  };
+  price_recovery: {
+    total_checkpoints: number;
+    healthy: number;
+    recoverable_failures: number;
+    retry_eligible: number;
+    retry_waiting: number;
+    action_required: number;
+    pending: number;
+    progress_percent: number;
+    retry_after_days: number;
+    status: 'healthy' | 'recovering' | 'action_required';
   };
   data_freshness: Array<{
     source: string;

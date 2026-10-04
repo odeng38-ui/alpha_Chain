@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.schema import (
     AuditLog,
     BacktestRun,
@@ -31,6 +32,47 @@ def _as_utc(value: date | datetime | None) -> datetime | None:
     return datetime.combine(value, time.min, tzinfo=timezone.utc)
 
 
+def _price_recovery_status(db: Session, now: datetime) -> dict:
+    rows = db.query(CollectionCheckpoint).filter(
+        CollectionCheckpoint.job_name == "daily_price",
+    ).all()
+    retry_before = now.replace(tzinfo=None) - timedelta(days=settings.PRICE_FAILURE_RETRY_DAYS)
+    healthy = 0
+    recoverable = 0
+    retry_eligible = 0
+    action_required = 0
+    pending = 0
+    for row in rows:
+        status = (row.status or "").upper()
+        if status == "SUCCESS":
+            healthy += 1
+        elif status in FAILURE_STATUSES:
+            no_new_data = "no price data found" in (row.last_error or "").lower()
+            if row.last_success_date is not None and no_new_data:
+                recoverable += 1
+                updated_at = row.updated_at or datetime.min
+                if updated_at <= retry_before:
+                    retry_eligible += 1
+            else:
+                action_required += 1
+        else:
+            pending += 1
+    total = len(rows)
+    return {
+        "total_checkpoints": total,
+        "healthy": healthy,
+        "recoverable_failures": recoverable,
+        "retry_eligible": retry_eligible,
+        "retry_waiting": max(recoverable - retry_eligible, 0),
+        "action_required": action_required,
+        "pending": pending,
+        "progress_percent": round(healthy / total * 100, 2) if total else 100.0,
+        "retry_after_days": settings.PRICE_FAILURE_RETRY_DAYS,
+        "status": "action_required" if action_required else (
+            "recovering" if recoverable or pending else "healthy"
+        ),
+    }
+
 def build_operational_alerts(db: Session, now: datetime | None = None) -> dict:
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     failures = []
@@ -44,6 +86,12 @@ def build_operational_alerts(db: Session, now: datetime | None = None) -> dict:
             "status": row.status,
             "updated_at": row.updated_at,
             "last_error": row.last_error,
+            "recovery_class": (
+                "automatic" if row.job_name == "daily_price"
+                and row.last_success_date is not None
+                and "no price data found" in (row.last_error or "").lower()
+                else "action_required"
+            ),
         })
     for row in db.query(DartSyncState).filter(
         func.upper(DartSyncState.status).in_(FAILURE_STATUSES)
@@ -55,6 +103,7 @@ def build_operational_alerts(db: Session, now: datetime | None = None) -> dict:
             "status": row.status,
             "updated_at": row.updated_at,
             "last_error": row.last_error,
+            "recovery_class": "action_required",
         })
 
     latest_values = {
@@ -140,10 +189,15 @@ def build_operational_alerts(db: Session, now: datetime | None = None) -> dict:
         "holdout_acceptance": acceptance,
     }
 
+    price_recovery = _price_recovery_status(db, now)
+
     stale_count = sum(item["status"] != "ok" for item in freshness)
     automation_issue_count = sum(item["status"] != "ok" for item in automation)
     model_degraded = model_status == "degraded"
-    status = ("critical" if failures or model_degraded else
+    critical_failure_count = sum(
+        item["recovery_class"] == "action_required" for item in failures
+    )
+    status = ("critical" if critical_failure_count or model_degraded else
               "warning" if stale_count or automation_issue_count or model_status == "missing"
               else "ok")
     return {
@@ -151,11 +205,13 @@ def build_operational_alerts(db: Session, now: datetime | None = None) -> dict:
         "checked_at": now,
         "summary": {
             "failed_jobs": len(failures),
+            "action_required_failures": critical_failure_count,
             "stale_or_missing_sources": stale_count,
             "automation_issues": automation_issue_count,
             "model_degraded": model_degraded,
         },
         "job_failures": failures,
+        "price_recovery": price_recovery,
         "data_freshness": freshness,
         "automation": automation,
         "model_health": model_health,

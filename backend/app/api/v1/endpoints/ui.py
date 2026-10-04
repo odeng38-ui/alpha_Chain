@@ -64,6 +64,7 @@ def operations_health(db: Session = Depends(get_db)):
         "status": alerts["status"],
         "checked_at": alerts["checked_at"],
         "summary": alerts["summary"],
+        "price_recovery": alerts["price_recovery"],
         "data_freshness": alerts["data_freshness"],
         "automation": alerts["automation"],
         "model_health": alerts["model_health"],

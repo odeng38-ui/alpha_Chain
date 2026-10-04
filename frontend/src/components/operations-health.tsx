@@ -14,11 +14,16 @@ const ko = {
   automation: '\uC790\uB3D9\uD654',
   data: '\uB370\uC774\uD130',
   days: '\uC77C \uACBD\uACFC',
+  recovery: '\uAC00\uACA9 \uC218\uC9D1 \uD68C\uBCF5',
+  healthy: '\uC815\uC0C1',
+  recoverable: '\uC790\uB3D9 \uD68C\uBCF5 \uB300\uC0C1',
+  eligible: '\uC989\uC2DC \uC7AC\uC2DC\uB3C4',
+  action: '\uD655\uC778 \uD544\uC694',
 };
 
 function tone(status: string) {
   return status === 'ok' || status === 'approved' ? 'good'
-    : status === 'critical' || status === 'degraded' || status === 'stale' ? 'bad' : 'warn';
+    : status === 'critical' || status === 'degraded' || status === 'stale' || status === 'action_required' ? 'bad' : 'warn';
 }
 
 function latestLabel(value: string | null, ageDays: number | null) {
@@ -29,11 +34,27 @@ function latestLabel(value: string | null, ageDays: number | null) {
 export function OperationsHealthPanel({ health }: Props) {
   if (!health) return <section className="ops-health empty"><AlertTriangle size={20} /><span>{ko.empty}</span></section>;
   const model = health.model_health;
+  const recovery = health.price_recovery;
   return <section className={`ops-health ${tone(health.status)}`} aria-label={ko.title}>
     <header>
       <div><span>OPERATIONS HEALTH</span><h2>{ko.title}</h2><p>{ko.subtitle}</p></div>
       <span className={`admin-badge ${tone(health.status)}`}>{health.status}</span>
     </header>
+    <article className="ops-recovery">
+      <div className="ops-recovery-heading">
+        <div><small>{ko.recovery}</small><strong>{recovery.progress_percent.toFixed(2)}%</strong></div>
+        <span className={'admin-badge ' + tone(recovery.status)}>{recovery.status.replaceAll('_', ' ')}</span>
+      </div>
+      <div className="ops-recovery-track" role="progressbar" aria-valuenow={recovery.progress_percent} aria-valuemin={0} aria-valuemax={100}>
+        <span style={{ width: String(Math.min(100, recovery.progress_percent)) + '%' }} />
+      </div>
+      <div className="ops-recovery-counts">
+        <span>{ko.healthy} <b>{recovery.healthy}</b></span>
+        <span>{ko.recoverable} <b>{recovery.recoverable_failures}</b></span>
+        <span>{ko.eligible} <b>{recovery.retry_eligible}</b></span>
+        <span>{ko.action} <b>{recovery.action_required}</b></span>
+      </div>
+    </article>
     <div className="ops-health-grid">
       <article>
         <ShieldCheck size={19} />

@@ -60,6 +60,7 @@ def test_operational_alerts_warn_when_sources_are_missing(db):
     assert result["status"] == "warning"
     assert result["summary"] == {
         "failed_jobs": 0,
+        "action_required_failures": 0,
         "stale_or_missing_sources": 3,
         "automation_issues": 3,
         "model_degraded": False,
@@ -106,6 +107,7 @@ def test_operational_alerts_report_failures_and_freshness(db):
     assert result["status"] == "critical"
     assert result["summary"] == {
         "failed_jobs": 2,
+        "action_required_failures": 2,
         "stale_or_missing_sources": 1,
         "automation_issues": 3,
         "model_degraded": False,
@@ -157,5 +159,57 @@ def test_public_operations_health_omits_failure_details(db):
 
     assert "job_failures" not in result
     assert set(result) == {
-        "status", "checked_at", "summary", "data_freshness", "automation", "model_health",
+        "status", "checked_at", "summary", "price_recovery", "data_freshness", "automation", "model_health",
+    }
+
+
+def test_price_recovery_distinguishes_retryable_and_action_required(db):
+    now = datetime(2026, 10, 10, 12, tzinfo=timezone.utc)
+    company = Company(name="Recovery Corp")
+    db.add(company)
+    db.flush()
+    securities = [
+        Security(company_id=company.id, market="KOSPI", ticker=f"00000{index}")
+        for index in range(1, 5)
+    ]
+    db.add_all(securities)
+    db.flush()
+    db.add_all([
+        CollectionCheckpoint(
+            job_name="daily_price", security_id=securities[0].id,
+            status="SUCCESS", last_success_date=date(2026, 10, 9),
+        ),
+        CollectionCheckpoint(
+            job_name="daily_price", security_id=securities[1].id,
+            status="FAILED", last_success_date=date(2026, 9, 30),
+            last_error="No price data found for ticker=000002",
+            updated_at=datetime(2026, 10, 1),
+        ),
+        CollectionCheckpoint(
+            job_name="daily_price", security_id=securities[2].id,
+            status="FAILED", last_success_date=date(2026, 10, 8),
+            last_error="No price data found for ticker=000003",
+            updated_at=datetime(2026, 10, 9),
+        ),
+        CollectionCheckpoint(
+            job_name="daily_price", security_id=securities[3].id,
+            status="FAILED", last_error="provider timeout",
+            updated_at=datetime(2026, 10, 1),
+        ),
+    ])
+    db.commit()
+
+    recovery = build_operational_alerts(db, now=now)["price_recovery"]
+
+    assert recovery == {
+        "total_checkpoints": 4,
+        "healthy": 1,
+        "recoverable_failures": 2,
+        "retry_eligible": 1,
+        "retry_waiting": 1,
+        "action_required": 1,
+        "pending": 0,
+        "progress_percent": 25.0,
+        "retry_after_days": 7,
+        "status": "action_required",
     }

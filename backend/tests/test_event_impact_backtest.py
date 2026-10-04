@@ -59,6 +59,12 @@ def test_event_backtest_is_point_in_time_and_reproducible():
     assert "INSUFFICIENT_OUTCOMES_1D" in first.report["failure_conditions"]
     assert first.report["bias_checklist"]["pre_event_prices_only"] is True
     assert first.report["samples"][0]["available_at"] == "2025-01-03T00:00:00"
+    temporal = first.report["temporal_validation"]
+    assert temporal["strategy"] == "chronological_event_holdout"
+    assert temporal["train"]["events"] == 1
+    assert temporal["holdout"]["events"] == 1
+    assert temporal["holdout"]["cutoff"] == "2025-01-10T00:00:00"
+    assert temporal["holdout"]["metrics"]["5d"]["observations"] == 1
     assert db.query(BacktestRun).count() == 2
     db.close()
 
@@ -127,7 +133,12 @@ def test_calibration_status_compares_registered_baseline_without_samples():
                    "average_aligned_return": -0.001},
             "5d": {"observations": 100, "direction_hit_rate": 0.50,
                    "average_aligned_return": 0.001},
-        }},
+        }, "temporal_validation": {"holdout": {"metrics": {
+            "1d": {"observations": 20, "direction_hit_rate": 0.40,
+                   "average_aligned_return": -0.002},
+            "5d": {"observations": 20, "direction_hit_rate": 0.45,
+                   "average_aligned_return": 0.0005},
+        }}}},
     )
     db.add(baseline)
     db.flush()
@@ -148,6 +159,12 @@ def test_calibration_status_compares_registered_baseline_without_samples():
                 "5d": {"observations": 101, "direction_hit_rate": 0.52,
                        "average_aligned_return": 0.0015},
             },
+            "temporal_validation": {"holdout": {"metrics": {
+                "1d": {"observations": 21, "direction_hit_rate": 0.42,
+                       "average_aligned_return": -0.0015},
+                "5d": {"observations": 21, "direction_hit_rate": 0.50,
+                       "average_aligned_return": 0.0012},
+            }}},
             "samples": [{"must": "not leak"}],
         },
     )
@@ -162,6 +179,10 @@ def test_calibration_status_compares_registered_baseline_without_samples():
     assert response["comparison"]["5d"]["delta"] == {
         "direction_hit_rate": pytest.approx(0.02),
         "average_aligned_return": pytest.approx(0.0005),
+    }
+    assert response["comparison"]["5d"]["holdout"]["delta"] == {
+        "direction_hit_rate": pytest.approx(0.05),
+        "average_aligned_return": pytest.approx(0.0007),
     }
     assert "samples" not in response
     db.close()

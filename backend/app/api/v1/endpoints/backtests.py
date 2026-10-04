@@ -88,6 +88,25 @@ def _event_metric_snapshot(run: BacktestRun, horizon: str):
     }
 
 
+def _event_holdout_snapshot(run: BacktestRun, horizon: str):
+    report = run.report or {}
+    temporal = report.get("temporal_validation")
+    samples = report.get("samples") or []
+    if temporal is None and samples and all(
+        "event_id" in sample and "available_at" in sample and "outcomes" in sample
+        for sample in samples
+    ):
+        temporal = EventImpactBacktestService()._temporal_validation(samples, (1, 5))
+    metric = (((temporal or {}).get("holdout") or {}).get("metrics") or {}).get(
+        horizon,
+    ) or {}
+    return {
+        "observations": metric.get("observations", 0),
+        "direction_hit_rate": metric.get("direction_hit_rate"),
+        "average_aligned_return": metric.get("average_aligned_return"),
+    }
+
+
 def _metric_delta(current, baseline):
     return {
         key: (round(current[key] - baseline[key], 8)
@@ -121,10 +140,17 @@ def event_impact_calibration_status(db: Session = Depends(get_db)):
     for horizon in ("1d", "5d"):
         current_metric = _event_metric_snapshot(current, horizon)
         baseline_metric = _event_metric_snapshot(baseline, horizon)
+        current_holdout = _event_holdout_snapshot(current, horizon)
+        baseline_holdout = _event_holdout_snapshot(baseline, horizon)
         comparison[horizon] = {
             "current": current_metric,
             "baseline": baseline_metric,
             "delta": _metric_delta(current_metric, baseline_metric),
+            "holdout": {
+                "current": current_holdout,
+                "baseline": baseline_holdout,
+                "delta": _metric_delta(current_holdout, baseline_holdout),
+            },
         }
     return {
         "status": "COMPARABLE",

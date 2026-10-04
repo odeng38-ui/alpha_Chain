@@ -129,6 +129,54 @@ class EventImpactBacktestService:
         ))
         return {"dimensions": report, "worst_segments": worst_segments[:10]}
 
+    def _temporal_validation(self, samples, horizons, holdout_fraction: float = 0.20):
+        event_times = {}
+        for sample in samples:
+            event_times[sample["event_id"]] = sample["available_at"]
+        ordered_events = sorted(event_times, key=lambda event_id: (
+            event_times[event_id], event_id,
+        ))
+        if not ordered_events:
+            return {
+                "strategy": "chronological_event_holdout",
+                "holdout_fraction": holdout_fraction,
+                "train": {"events": 0, "metrics": {}},
+                "holdout": {"events": 0, "cutoff": None, "metrics": {},
+                            "horizon_acceptance": {}, "status": "INSUFFICIENT_SAMPLE"},
+            }
+        holdout_count = max(1, int(len(ordered_events) * holdout_fraction))
+        holdout_ids = set(ordered_events[-holdout_count:])
+        train_ids = set(ordered_events) - holdout_ids
+
+        def section_metrics(event_ids):
+            result = {}
+            for horizon in horizons:
+                key = f"{horizon}d"
+                rows = [
+                    sample["outcomes"].get(key) for sample in samples
+                    if sample["event_id"] in event_ids
+                    and sample["outcomes"].get(key) is not None
+                ]
+                result[key] = self._metrics(rows)
+            return result
+
+        train_metrics = section_metrics(train_ids)
+        holdout_metrics = section_metrics(holdout_ids)
+        acceptance, failures, status = self._acceptance(holdout_metrics)
+        return {
+            "strategy": "chronological_event_holdout",
+            "holdout_fraction": holdout_fraction,
+            "train": {"events": len(train_ids), "metrics": train_metrics},
+            "holdout": {
+                "events": len(holdout_ids),
+                "cutoff": event_times[ordered_events[-holdout_count]],
+                "metrics": holdout_metrics,
+                "horizon_acceptance": acceptance,
+                "failure_conditions": failures,
+                "status": status,
+            },
+        }
+
     def run(self, db: Session, name: str, start: date | None = None, end: date | None = None,
             max_events: int = 10, candidates_per_event: int = 20,
             horizons=(1, 5), baseline_run_id: int | None = None) -> BacktestRun:
@@ -195,11 +243,13 @@ class EventImpactBacktestService:
         ).hexdigest()
         observations = sum(item["observations"] for item in metrics.values())
         horizon_acceptance, failure_conditions, run_status = self._acceptance(metrics)
+        temporal_validation = self._temporal_validation(samples, horizons)
         report = {
             "summary": {"events": len(events), "candidate_rows": len(samples),
                         "outcome_observations": observations},
             "metrics": metrics,
             "diagnostics": diagnostics,
+            "temporal_validation": temporal_validation,
             "samples": samples,
             "failure_conditions": failure_conditions,
             "horizon_acceptance": horizon_acceptance,

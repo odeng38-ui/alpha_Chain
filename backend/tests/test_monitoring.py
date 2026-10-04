@@ -170,7 +170,7 @@ def test_price_recovery_distinguishes_retryable_and_action_required(db):
     db.flush()
     securities = [
         Security(company_id=company.id, market="KOSPI", ticker=f"00000{index}")
-        for index in range(1, 5)
+        for index in range(1, 6)
     ]
     db.add_all(securities)
     db.flush()
@@ -196,20 +196,31 @@ def test_price_recovery_distinguishes_retryable_and_action_required(db):
             status="FAILED", last_error="provider timeout",
             updated_at=datetime(2026, 10, 1),
         ),
+        DailyPrice(
+            security_id=securities[4].id,
+            trade_date=date(2026, 9, 30),
+            close=100,
+        ),
+        CollectionCheckpoint(
+            job_name="daily_price", security_id=securities[4].id,
+            status="FAILED",
+            last_error="No price data found for ticker=000005",
+            updated_at=datetime(2026, 10, 1),
+        ),
     ])
     db.commit()
 
     recovery = build_operational_alerts(db, now=now)["price_recovery"]
 
     assert recovery == {
-        "total_checkpoints": 4,
+        "total_checkpoints": 5,
         "healthy": 1,
-        "recoverable_failures": 2,
-        "retry_eligible": 1,
+        "recoverable_failures": 3,
+        "retry_eligible": 2,
         "retry_waiting": 1,
         "action_required": 1,
         "pending": 0,
-        "progress_percent": 25.0,
+        "progress_percent": 20.0,
         "retry_after_days": 7,
         "status": "action_required",
     }

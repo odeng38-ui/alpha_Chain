@@ -32,7 +32,25 @@ def _as_utc(value: date | datetime | None) -> datetime | None:
     return datetime.combine(value, time.min, tzinfo=timezone.utc)
 
 
-def _price_recovery_status(db: Session, now: datetime) -> dict:
+def _is_recoverable_price_failure(
+    row: CollectionCheckpoint,
+    priced_security_ids: set[int],
+) -> bool:
+    return (
+        row.job_name == "daily_price"
+        and "no price data found" in (row.last_error or "").lower()
+        and (
+            row.last_success_date is not None
+            or row.security_id in priced_security_ids
+        )
+    )
+
+
+def _price_recovery_status(
+    db: Session,
+    now: datetime,
+    priced_security_ids: set[int],
+) -> dict:
     rows = db.query(CollectionCheckpoint).filter(
         CollectionCheckpoint.job_name == "daily_price",
     ).all()
@@ -47,8 +65,7 @@ def _price_recovery_status(db: Session, now: datetime) -> dict:
         if status == "SUCCESS":
             healthy += 1
         elif status in FAILURE_STATUSES:
-            no_new_data = "no price data found" in (row.last_error or "").lower()
-            if row.last_success_date is not None and no_new_data:
+            if _is_recoverable_price_failure(row, priced_security_ids):
                 recoverable += 1
                 updated_at = row.updated_at or datetime.min
                 if updated_at <= retry_before:
@@ -76,6 +93,9 @@ def _price_recovery_status(db: Session, now: datetime) -> dict:
 def build_operational_alerts(db: Session, now: datetime | None = None) -> dict:
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     failures = []
+    priced_security_ids = {
+        row[0] for row in db.query(DailyPrice.security_id).distinct().all()
+    }
     for row in db.query(CollectionCheckpoint).filter(
         func.upper(CollectionCheckpoint.status).in_(FAILURE_STATUSES)
     ).all():
@@ -87,9 +107,8 @@ def build_operational_alerts(db: Session, now: datetime | None = None) -> dict:
             "updated_at": row.updated_at,
             "last_error": row.last_error,
             "recovery_class": (
-                "automatic" if row.job_name == "daily_price"
-                and row.last_success_date is not None
-                and "no price data found" in (row.last_error or "").lower()
+                "automatic"
+                if _is_recoverable_price_failure(row, priced_security_ids)
                 else "action_required"
             ),
         })
@@ -189,7 +208,7 @@ def build_operational_alerts(db: Session, now: datetime | None = None) -> dict:
         "holdout_acceptance": acceptance,
     }
 
-    price_recovery = _price_recovery_status(db, now)
+    price_recovery = _price_recovery_status(db, now, priced_security_ids)
 
     stale_count = sum(item["status"] != "ok" for item in freshness)
     automation_issue_count = sum(item["status"] != "ok" for item in automation)

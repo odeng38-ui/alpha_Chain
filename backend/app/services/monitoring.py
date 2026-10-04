@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 
+from app.core.config import settings
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.schema import (
     AuditLog,
     BacktestRun,

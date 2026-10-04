@@ -77,9 +77,18 @@ def event_recommendations(event_id: int, limit: int = Query(20, ge=1, le=100),
     latest_run = db.query(BacktestRun).filter(
         BacktestRun.score_version == "impact-v4",
     ).order_by(BacktestRun.completed_at.desc()).first()
-    acceptance = ((latest_run.report or {}).get("horizon_acceptance", {}).get("5d", {})
-                  if latest_run else {})
-    approved = acceptance.get("status") == "PASSED"
+    report = latest_run.report if latest_run and latest_run.report else {}
+    metadata = report.get("model_metadata") or {}
+    holdout = (report.get("temporal_validation") or {}).get("holdout") or {}
+    acceptance = (holdout.get("horizon_acceptance") or {}).get("5d") or {}
+    approval_checks = {
+        "calibration_current": (
+            metadata.get("calibration_version") == EventImpactV4Service.calibration_version
+        ),
+        "minimum_holdout_events": holdout.get("events", 0) >= 10,
+        "holdout_5d_passed": acceptance.get("status") == "PASSED",
+    }
+    approved = all(approval_checks.values())
     rows = db.query(EventImpactCandidate, Security, Company).join(
         Security, Security.id == EventImpactCandidate.security_id
     ).join(Company, Company.id == Security.company_id).filter(
@@ -89,6 +98,9 @@ def event_recommendations(event_id: int, limit: int = Query(20, ge=1, le=100),
     return {
         "event_id": event_id, "model_version": "impact-v4-5d",
         "model_approved": approved,
+        "approval_policy_version": "impact-v4-holdout-gate-1",
+        "approval_source": "temporal_holdout_5d",
+        "approval_checks": approval_checks,
         "acceptance_run_id": latest_run.id if latest_run else None,
         "acceptance": acceptance, "count": len(rows),
         "data": [{

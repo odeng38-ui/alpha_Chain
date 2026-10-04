@@ -6,8 +6,16 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.v1.endpoints.global_events import event_recommendations
 from app.db.session import Base
-from app.models.schema import Company, DailyPrice, EventImpactCandidate, GlobalEvent, Security
+from app.models.schema import (
+    BacktestRun,
+    Company,
+    DailyPrice,
+    EventImpactCandidate,
+    GlobalEvent,
+    Security,
+)
 from app.services.event_impact_service import (
     EventImpactService,
     EventImpactV2Service,
@@ -221,3 +229,47 @@ def test_v4_calibration_compounds_independent_risk_factors():
 
     assert factors == {"history": 0.45, "symbol": 0.85, "direction_horizon": 0.75}
     assert multiplier == pytest.approx(0.286875)
+
+def test_recommendation_approval_requires_current_holdout_gate():
+    db = Session()
+    legacy = BacktestRun(
+        name="legacy-full-pass", score_version="impact-v4", horizon="1d,5d",
+        config={}, dataset_hash="d" * 64, parameter_adjustments=0,
+        status="COMPLETED", completed_at=datetime(2026, 10, 1),
+        report={"horizon_acceptance": {"5d": {"status": "PASSED"}}},
+    )
+    db.add(legacy)
+    db.commit()
+
+    legacy_response = event_recommendations(1, limit=20, db=db)
+
+    assert legacy_response["model_approved"] is False
+    assert legacy_response["approval_checks"] == {
+        "calibration_current": False,
+        "minimum_holdout_events": False,
+        "holdout_5d_passed": False,
+    }
+
+    calibrated = BacktestRun(
+        name="calibrated-holdout-pass", score_version="impact-v4", horizon="1d,5d",
+        config={}, dataset_hash="e" * 64, parameter_adjustments=3,
+        status="PARTIAL_ACCEPTANCE", completed_at=datetime(2026, 10, 2),
+        report={
+            "model_metadata": {"calibration_version": "impact-v4-calibration-1"},
+            "temporal_validation": {"holdout": {
+                "events": 10,
+                "horizon_acceptance": {"5d": {"status": "PASSED"}},
+            }},
+        },
+    )
+    db.add(calibrated)
+    db.commit()
+
+    response = event_recommendations(1, limit=20, db=db)
+
+    assert response["model_approved"] is True
+    assert response["approval_policy_version"] == "impact-v4-holdout-gate-1"
+    assert response["approval_source"] == "temporal_holdout_5d"
+    assert all(response["approval_checks"].values())
+    assert response["acceptance_run_id"] == calibrated.id
+    db.close()

@@ -44,6 +44,8 @@ def test_sync_is_idempotent_and_sets_next_day_availability():
     first = service.sync(db, date(2025, 2, 1), symbols=("^GSPC",))
     second = service.sync(db, date(2025, 2, 1), symbols=("^GSPC",))
     assert first["created"] == 1
+    assert first["event_ids"]
+    assert second["event_ids"] == []
     assert second["created"] == 0
     assert db.query(GlobalEvent).count() == 1
     row = db.query(GlobalEvent).one()

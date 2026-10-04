@@ -56,6 +56,7 @@ class USMarketEventService:
         start_date = as_of - timedelta(days=max(60, min(lookback_days, 730)))
         created = updated = 0
         failures = []
+        touched_external_ids = []
         for symbol in symbols:
             try:
                 records = self.adapter.fetch_daily(symbol, start_date, as_of)
@@ -79,13 +80,18 @@ class USMarketEventService:
                     )
                     if row is None:
                         db.add(GlobalEvent(external_id=external_id, **values))
+                        touched_external_ids.append(external_id)
                         created += 1
                     elif row.raw_hash != raw_hash:
                         for key, value in values.items():
                             setattr(row, key, value)
+                        touched_external_ids.append(external_id)
                         updated += 1
             except Exception as exc:
                 failures.append({"symbol": symbol, "error": str(exc)})
         db.commit()
+        event_ids = [row[0] for row in db.query(GlobalEvent.id).filter(
+            GlobalEvent.external_id.in_(touched_external_ids),
+        ).all()] if touched_external_ids else []
         return {"as_of": as_of.isoformat(), "symbols": len(tuple(symbols)), "created": created,
-                "updated": updated, "failures": failures}
+                "updated": updated, "event_ids": event_ids, "failures": failures}

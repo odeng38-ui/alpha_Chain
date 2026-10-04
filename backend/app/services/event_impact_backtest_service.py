@@ -131,7 +131,7 @@ class EventImpactBacktestService:
 
     def run(self, db: Session, name: str, start: date | None = None, end: date | None = None,
             max_events: int = 10, candidates_per_event: int = 20,
-            horizons=(1, 5)) -> BacktestRun:
+            horizons=(1, 5), baseline_run_id: int | None = None) -> BacktestRun:
         query = db.query(GlobalEvent).filter(GlobalEvent.event_kind == "MARKET_SHOCK")
         if start:
             query = query.filter(GlobalEvent.available_at >= datetime.combine(start, datetime.min.time()))
@@ -183,7 +183,11 @@ class EventImpactBacktestService:
                     if sample["outcomes"].get(key) is not None]
             metrics[key] = self._metrics(rows)
             diagnostics[key] = self._diagnostics(samples, key)
-        frozen = {"version": self.version, "events": [event.external_id for event in events],
+        calibration_version = (
+            EventImpactV4Service.calibration_version if self.version == "impact-v4" else None
+        )
+        frozen = {"version": self.version, "calibration_version": calibration_version,
+                  "events": [event.external_id for event in events],
                   "horizons": list(horizons), "candidates_per_event": candidates_per_event,
                   "samples": samples}
         dataset_hash = hashlib.sha256(
@@ -207,13 +211,18 @@ class EventImpactBacktestService:
             },
             "dataset_manifest": {"hash": dataset_hash, "version": self.version,
                                  "event_count": len(events)},
+            "model_metadata": {"calibration_version": calibration_version,
+                               "baseline_run_id": baseline_run_id},
         }
         run = BacktestRun(
             name=name, score_version=self.version,
             horizon=",".join(f"{item}d" for item in horizons),
             config={"max_events": max_events, "candidates_per_event": candidates_per_event,
-                    "horizons": list(horizons)},
-            dataset_hash=dataset_hash, parameter_adjustments=0,
+                    "horizons": list(horizons),
+                    "calibration_version": calibration_version,
+                    "baseline_run_id": baseline_run_id},
+            dataset_hash=dataset_hash,
+            parameter_adjustments=3 if calibration_version else 0,
             status=run_status,
             report=report, completed_at=datetime.utcnow(),
         )

@@ -194,11 +194,30 @@ def test_v4_learns_post_open_return_instead_of_overnight_gap():
                          event_metadata={}, raw_hash="8" * 64)
     db.add_all([prior, target])
     db.commit()
-    EventImpactV4Service(1).generate(db, target.id, 1)
+    result = EventImpactV4Service(1).generate(db, target.id, 1)
     row = db.query(EventImpactCandidate).filter_by(version="impact-v4-1d").one()
     learned = row.explanation["historical_sensitivity"]["weighted_open_to_close_return"]
     assert learned == pytest.approx(111 / 110 - 1)
     assert learned < 0.01
     assert row.explanation["entry_basis"] == "reaction_session_open"
     assert row.explanation["training_horizon"] == "1d"
+    calibration = row.explanation["confidence_calibration"]
+    assert calibration["version"] == "impact-v4-calibration-1"
+    assert calibration["factors"] == {
+        "history": 0.7, "symbol": 1.0, "direction_horizon": 0.85,
+    }
+    assert calibration["multiplier"] == pytest.approx(0.595)
+    assert row.confidence == pytest.approx(
+        calibration["base_confidence"] * calibration["multiplier"], abs=1e-6,
+    )
+    assert result["removed"] == 0
     db.close()
+
+
+def test_v4_calibration_compounds_independent_risk_factors():
+    event = GlobalEvent(symbol="^GSPC", direction="NEGATIVE")
+
+    factors, multiplier = EventImpactV4Service(5)._confidence_calibration(event, 0)
+
+    assert factors == {"history": 0.45, "symbol": 0.85, "direction_horizon": 0.75}
+    assert multiplier == pytest.approx(0.286875)

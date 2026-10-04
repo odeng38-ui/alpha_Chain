@@ -345,11 +345,27 @@ class EventImpactV3Service(EventImpactV2Service):
                 "updated": updated, "count": len(selected)}
 
 class EventImpactV4Service(EventImpactService):
+    calibration_version = "impact-v4-calibration-1"
+
     def __init__(self, horizon: int):
         if horizon not in {1, 5}:
             raise ValueError("impact-v4 horizon must be 1 or 5")
         self.horizon = horizon
         self.version = f"impact-v4-{horizon}d"
+
+    def _confidence_calibration(self, event, sample_count: int):
+        factors = {
+            "history": 0.45 if sample_count == 0 else 0.70 if sample_count <= 3 else 1.0,
+            "symbol": 0.85 if event.symbol == "^GSPC" else 1.0,
+            "direction_horizon": (
+                0.85 if self.horizon == 1 and event.direction == "POSITIVE" else
+                0.75 if self.horizon == 5 and event.direction == "NEGATIVE" else 1.0
+            ),
+        }
+        multiplier = 1.0
+        for value in factors.values():
+            multiplier *= value
+        return factors, round(multiplier, 6)
 
     def generate(self, db: Session, event_id: int, limit: int = 100):
         event = db.get(GlobalEvent, event_id)
@@ -437,26 +453,42 @@ class EventImpactV4Service(EventImpactService):
                          / len(ordered_turnovers)) if ordered_turnovers else 0.0
             exposure = exposure_map[security.company.industry_id]
             reliability = min(1.0, sensitivity["sample_count"] / 8.0)
-            confidence = round(0.30 * exposure + 0.30 * reliability
+            base_confidence = (0.30 * exposure + 0.30 * reliability
                                + 0.25 * sensitivity["direction_consistency"]
-                               + 0.15 * liquidity, 6)
+                               + 0.15 * liquidity)
+            calibration_factors, calibration_multiplier = self._confidence_calibration(
+                event, sensitivity["sample_count"],
+            )
+            confidence = round(base_confidence * calibration_multiplier, 6)
             magnitude = min(100.0, float(event.shock_score) * exposure
                             * (0.70 + 0.60 * abnormal_score / 100.0)
                             * (0.90 + 0.10 * liquidity))
             score = round(magnitude if event.direction == "POSITIVE" else -magnitude, 4)
             ranked.append((abs(score) * (0.65 + 0.35 * confidence), security,
                            score, confidence, exposure, liquidity, turnover,
-                           abnormal, abnormal_score, sensitivity, prices[-1]))
+                           abnormal, abnormal_score, sensitivity, base_confidence,
+                           calibration_factors, calibration_multiplier, prices[-1]))
         ranked.sort(key=lambda item: (-item[0], item[1].id))
         selected = ranked[:limit]
+        selected_ids = [item[1].id for item in selected]
+        stale_query = db.query(EventImpactCandidate).filter(
+            EventImpactCandidate.event_id == event_id,
+            EventImpactCandidate.version == self.version,
+        )
+        if selected_ids:
+            stale_query = stale_query.filter(
+                ~EventImpactCandidate.security_id.in_(selected_ids),
+            )
+        removed = stale_query.delete(synchronize_session=False)
         existing = {row.security_id: row for row in db.query(EventImpactCandidate).filter(
             EventImpactCandidate.event_id == event_id,
             EventImpactCandidate.version == self.version,
-            EventImpactCandidate.security_id.in_([item[1].id for item in selected]),
+            EventImpactCandidate.security_id.in_(selected_ids),
         ).all()} if selected else {}
         created = updated = 0
         for rank, (_, security, score, confidence, exposure, liquidity, turnover,
-                   abnormal, abnormal_score, sensitivity, latest) in enumerate(selected, 1):
+                   abnormal, abnormal_score, sensitivity, base_confidence,
+                   calibration_factors, calibration_multiplier, latest) in enumerate(selected, 1):
             row = existing.get(security.id)
             if row is None:
                 row = EventImpactCandidate(event_id=event_id, security_id=security.id,
@@ -477,6 +509,12 @@ class EventImpactV4Service(EventImpactService):
                                       "abnormal_score": round(abnormal_score, 4)},
                 "liquidity": {"turnover_proxy": round(turnover, 2),
                               "percentile": round(liquidity, 6)},
+                "confidence_calibration": {
+                    "version": self.calibration_version,
+                    "base_confidence": round(base_confidence, 6),
+                    "factors": calibration_factors,
+                    "multiplier": calibration_multiplier,
+                },
                 "training_horizon": f"{self.horizon}d",
                 "entry_basis": "reaction_session_open",
                 "no_lookahead_cutoff": event.available_at.isoformat(),
@@ -485,4 +523,5 @@ class EventImpactV4Service(EventImpactService):
         db.commit()
         return {"event_id": event_id, "version": self.version,
                 "historical_event_count": len(historical), "eligible": len(ranked),
-                "created": created, "updated": updated, "count": len(selected)}
+                "created": created, "updated": updated, "removed": removed,
+                "count": len(selected)}

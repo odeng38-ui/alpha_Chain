@@ -15,6 +15,7 @@ from app.models.schema import (
     Security,
 )
 from app.services.fred_service import FredCollectionService
+from app.services.monitoring import build_operational_alerts
 
 router = APIRouter(prefix="/ui", tags=["Web MVP"])
 
@@ -53,6 +54,19 @@ def dashboard(as_of: date = Query(default_factory=date.today), db: Session = Dep
                         "event_date": event.event_date} for event, company_name, title in events],
         "freshness": {"prices": latest_price, "filings": latest_filing,
                       "scores": latest_score_date, "macro": cutoff},
+    }
+
+
+@router.get("/operations-health")
+def operations_health(db: Session = Depends(get_db)):
+    alerts = build_operational_alerts(db)
+    return {
+        "status": alerts["status"],
+        "checked_at": alerts["checked_at"],
+        "summary": alerts["summary"],
+        "data_freshness": alerts["data_freshness"],
+        "automation": alerts["automation"],
+        "model_health": alerts["model_health"],
     }
 
 

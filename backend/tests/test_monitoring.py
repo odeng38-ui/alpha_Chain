@@ -5,9 +5,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.v1.endpoints.ui import operations_health
 from app.db.session import Base
 from app.metrics import RequestMetrics
 from app.models.schema import (
+    AuditLog,
+    BacktestRun,
     CollectionCheckpoint,
     Company,
     DailyPrice,
@@ -55,7 +58,12 @@ def test_operational_alerts_warn_when_sources_are_missing(db):
     )
 
     assert result["status"] == "warning"
-    assert result["summary"] == {"failed_jobs": 0, "stale_or_missing_sources": 3}
+    assert result["summary"] == {
+        "failed_jobs": 0,
+        "stale_or_missing_sources": 3,
+        "automation_issues": 3,
+        "model_degraded": False,
+    }
     assert {row["status"] for row in result["data_freshness"]} == {"missing"}
 
 
@@ -96,7 +104,12 @@ def test_operational_alerts_report_failures_and_freshness(db):
     result = build_operational_alerts(db, now=now)
 
     assert result["status"] == "critical"
-    assert result["summary"] == {"failed_jobs": 2, "stale_or_missing_sources": 1}
+    assert result["summary"] == {
+        "failed_jobs": 2,
+        "stale_or_missing_sources": 1,
+        "automation_issues": 3,
+        "model_degraded": False,
+    }
     statuses = {row["source"]: row["status"] for row in result["data_freshness"]}
     assert statuses == {
         "daily_prices": "ok",
@@ -106,4 +119,43 @@ def test_operational_alerts_report_failures_and_freshness(db):
     assert {row["last_error"] for row in result["job_failures"]} == {
         "provider timeout",
         "rate limited",
+    }
+
+def test_operational_alerts_report_cron_heartbeats_and_model_approval(db):
+    now = datetime(2026, 10, 4, 12, tzinfo=timezone.utc)
+    for job_name in ("news", "prices"):
+        db.add(AuditLog(
+            actor="vercel-cron", action="completed", resource_type="cron_run",
+            resource_id=job_name, before_state=None, after_state={"status": "SUCCESS"},
+            request_id="test", created_at=datetime(2026, 10, 4, 9),
+        ))
+    db.add(BacktestRun(
+        name="impact-v4-weekly-2026-W40", score_version="impact-v4",
+        horizon="1d,5d", config={}, dataset_hash="f" * 64,
+        parameter_adjustments=3, status="PARTIAL_ACCEPTANCE",
+        completed_at=datetime(2026, 10, 3, 9),
+        report={
+            "model_metadata": {"calibration_version": "impact-v4-calibration-1"},
+            "temporal_validation": {"holdout": {
+                "events": 10,
+                "horizon_acceptance": {"5d": {"status": "PASSED"}},
+            }},
+        },
+    ))
+    db.commit()
+
+    result = build_operational_alerts(db, now=now)
+
+    assert {item["status"] for item in result["automation"]} == {"ok"}
+    assert result["summary"]["automation_issues"] == 0
+    assert result["model_health"]["status"] == "approved"
+    assert result["model_health"]["approved"] is True
+    assert all(result["model_health"]["approval_checks"].values())
+
+def test_public_operations_health_omits_failure_details(db):
+    result = operations_health(db)
+
+    assert "job_failures" not in result
+    assert set(result) == {
+        "status", "checked_at", "summary", "data_freshness", "automation", "model_health",
     }

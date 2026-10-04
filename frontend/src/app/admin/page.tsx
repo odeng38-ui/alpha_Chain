@@ -6,9 +6,10 @@ import {
   Activity, AlertTriangle, ArrowLeft, Check, CheckCircle2, Clock3, Database,
   FileCheck2, Gauge, GitPullRequest, Layers3, LoaderCircle, RefreshCw, ShieldCheck, X,
 } from 'lucide-react';
+import { OperationsHealthPanel } from '@/components/operations-health';
 import { getAdminOverview, reviewRelationship, type AdminOverview, type ReviewItem } from '@/lib/admin-api';
 
-const emptyOverview: AdminOverview = { mapping: null, quality: null, reviews: [], backtests: [], errors: [] };
+const emptyOverview: AdminOverview = { mapping: null, quality: null, reviews: [], backtests: [], operations: null, errors: [] };
 
 function formatPercent(value: number | null | undefined, signed = false) {
   if (value === null || value === undefined) return '—';
@@ -104,6 +105,8 @@ export default function AdminPage() {
         <article><span className="metric-icon amber"><Clock3 size={20} /></span><div><small>관계 검토 대기</small><strong>{data.reviews.length}</strong><em>승인 또는 반려 필요</em></div></article>
         <article><span className="metric-icon red"><AlertTriangle size={20} /></span><div><small>실패 백테스트</small><strong>{failedBacktests}</strong><em>최근 {data.backtests.length}건 기준</em></div></article>
       </section>
+
+      <OperationsHealthPanel health={data.operations} />
 
       <section className="admin-grid" id="quality">
         <article className="admin-card">

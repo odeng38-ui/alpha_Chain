@@ -29,6 +29,7 @@ def test_cron_runs_bounded_batch_with_valid_token(monkeypatch):
     backtest = {"run_id": 12, "status": "INSUFFICIENT_SAMPLE", "created": True}
     monkeypatch.setattr(cron.settings, "CRON_SECRET", "expected")
     monkeypatch.setattr(cron.settings, "CRON_BATCH_SIZE", 250)
+    monkeypatch.setattr(cron, "_record_cron_success", lambda db, job_name: None)
     monkeypatch.setattr(
         cron,
         "incremental_due_batch_update",
@@ -47,6 +48,7 @@ def test_cron_runs_bounded_batch_with_valid_token(monkeypatch):
 def test_news_cron_runs_pipeline_with_valid_token(monkeypatch):
     expected = {"validation": {"status": "PASSED"}}
     monkeypatch.setattr(cron.settings, "CRON_SECRET", "expected")
+    monkeypatch.setattr(cron, "_record_cron_success", lambda db, job_name: None)
     monkeypatch.setattr(
         cron,
         "run_news_pipeline",

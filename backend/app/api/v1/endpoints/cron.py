@@ -10,6 +10,7 @@ from app.adapters.us_market_adapter import YahooUSMarketAdapter
 from app.config import settings
 from app.db.session import get_db
 from app.models.schema import BacktestRun, GlobalEvent
+from app.services.audit_service import record_audit
 from app.services.event_impact_backtest_service import EventImpactBacktestService
 from app.services.event_impact_service import EventImpactV4Service
 from app.services.news_candidate_backtest_service import NewsCandidateBacktestService
@@ -36,6 +37,19 @@ def _authorize_cron(authorization: str | None):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid cron authorization",
         )
+
+
+def _record_cron_success(db: Session, job_name: str):
+    record_audit(
+        db,
+        actor="vercel-cron",
+        action="completed",
+        resource_type="cron_run",
+        resource_id=job_name,
+        before_state=None,
+        after_state={"status": "SUCCESS"},
+    )
+    db.commit()
 
 
 def run_us_market_pipeline(db: Session):
@@ -126,6 +140,7 @@ def collect_due_prices(
         batch_size=max(1, min(settings.CRON_BATCH_SIZE, 100)),
     )
     result["news_backtest"] = run_daily_news_backtest(db)
+    _record_cron_success(db, "prices")
     return result
 
 
@@ -136,4 +151,6 @@ def collect_and_link_news(
 ):
     """Collect, classify, link, and validate the active news window."""
     _authorize_cron(authorization)
-    return run_news_pipeline(db)
+    result = run_news_pipeline(db)
+    _record_cron_success(db, "news")
+    return result

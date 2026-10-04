@@ -69,11 +69,46 @@ export type BacktestItem = {
   report?: BacktestReport;
 };
 
+export type OperationsHealth = {
+  status: 'ok' | 'warning' | 'critical';
+  checked_at: string;
+  summary: {
+    failed_jobs: number;
+    stale_or_missing_sources: number;
+    automation_issues: number;
+    model_degraded: boolean;
+  };
+  data_freshness: Array<{
+    source: string;
+    latest_at: string | null;
+    age_days: number | null;
+    threshold_days: number;
+    status: 'ok' | 'stale' | 'missing';
+  }>;
+  automation: Array<{
+    job_name: string;
+    latest_success_at: string | null;
+    age_days: number | null;
+    threshold_days: number;
+    status: 'ok' | 'stale' | 'missing';
+    run_id?: number | null;
+  }>;
+  model_health: {
+    status: 'approved' | 'degraded' | 'missing';
+    model_version: string;
+    approved: boolean;
+    latest_run_id: number | null;
+    approval_checks: Record<string, boolean>;
+    holdout_acceptance: { status?: string; failure_conditions?: string[] };
+  };
+};
+
 export type AdminOverview = {
   mapping: MappingReport | null;
   quality: PriceQuality | null;
   reviews: ReviewItem[];
   backtests: BacktestItem[];
+  operations: OperationsHealth | null;
   errors: string[];
 };
 
@@ -92,6 +127,7 @@ export async function getAdminOverview(): Promise<AdminOverview> {
     request<PriceQuality>('prices/quality?limit=100'),
     request<ReviewItem[]>('relationships/review-queue?limit=30'),
     request<BacktestItem[]>('backtests?limit=10'),
+    request<OperationsHealth>('ui/operations-health'),
   ]);
   const backtests = tasks[3].status === 'fulfilled' ? tasks[3].value : [];
   const detailedBacktests = await Promise.all(backtests.map(async (item) => {
@@ -108,6 +144,7 @@ export async function getAdminOverview(): Promise<AdminOverview> {
     quality: tasks[1].status === 'fulfilled' ? tasks[1].value : null,
     reviews: tasks[2].status === 'fulfilled' ? tasks[2].value : [],
     backtests: detailedBacktests,
+    operations: tasks[4].status === 'fulfilled' ? tasks[4].value : null,
     errors,
   };
 }

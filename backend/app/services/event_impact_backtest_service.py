@@ -15,6 +15,7 @@ from app.services.event_impact_service import (
 
 class EventImpactBacktestService:
     version = "impact-v2"
+    minimum_diagnostic_observations = 10
 
     def __init__(self, version: str = "impact-v2"):
         if version not in {"impact-v2", "impact-v3", "impact-v4"}:
@@ -116,7 +117,7 @@ class EventImpactBacktestService:
                 for label, outcomes in sorted(groups.items())
             }
             for label, metrics in report[dimension].items():
-                if metrics["observations"] >= 2:
+                if metrics["observations"] >= self.minimum_diagnostic_observations:
                     worst_segments.append({
                         "dimension": dimension,
                         "segment": label,

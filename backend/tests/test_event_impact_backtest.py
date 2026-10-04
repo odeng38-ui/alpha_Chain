@@ -53,7 +53,7 @@ def test_event_backtest_is_point_in_time_and_reproducible():
     assert first.report["diagnostics"]["1d"]["dimensions"]["event_symbol"]["^SOX"][
         "observations"
     ] == 2
-    assert first.report["diagnostics"]["1d"]["worst_segments"][0]["dimension"]
+    assert first.report["diagnostics"]["1d"]["worst_segments"] == []
     assert first.status == "FAILED_ACCEPTANCE"
     assert first.report["horizon_acceptance"]["1d"]["status"] == "FAILED"
     assert "INSUFFICIENT_OUTCOMES_1D" in first.report["failure_conditions"]
@@ -101,7 +101,7 @@ def test_diagnostics_rank_worst_segments_by_miss_rate():
             "confidence": 0.55, "historical_sample_count": 3,
             "outcomes": {"1d": {"raw_return": -0.02, "aligned_return": 0.02}},
         },
-    ]
+    ] * 5
 
     report = EventImpactBacktestService()._diagnostics(samples, "1d")
 

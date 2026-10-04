@@ -71,13 +71,62 @@ class EventImpactBacktestService:
     def _metrics(rows):
         if not rows:
             return {"observations": 0, "average_raw_return": None,
-                    "average_aligned_return": None, "direction_hit_rate": None}
+                    "average_aligned_return": None, "direction_hit_rate": None,
+                    "misses": 0, "miss_rate": None}
+        misses = sum(row["aligned_return"] <= 0 for row in rows)
         return {
             "observations": len(rows),
             "average_raw_return": round(mean(row["raw_return"] for row in rows), 8),
             "average_aligned_return": round(mean(row["aligned_return"] for row in rows), 8),
             "direction_hit_rate": round(mean(row["aligned_return"] > 0 for row in rows), 8),
+            "misses": misses,
+            "miss_rate": round(misses / len(rows), 8),
         }
+
+    def _diagnostics(self, samples, horizon_key):
+        dimensions = {
+            "event_symbol": lambda sample: sample["event_symbol"],
+            "event_direction": lambda sample: sample["event_direction"],
+            "rank_band": lambda sample: (
+                "01-05" if sample["rank"] <= 5 else
+                "06-10" if sample["rank"] <= 10 else "11+"
+            ),
+            "confidence_band": lambda sample: (
+                "high" if sample["confidence"] >= 0.7 else
+                "medium" if sample["confidence"] >= 0.5 else "low"
+            ),
+            "history_band": lambda sample: (
+                "zero" if sample["historical_sample_count"] == 0 else
+                "01-03" if sample["historical_sample_count"] <= 3 else
+                "04-07" if sample["historical_sample_count"] <= 7 else "08+"
+            ),
+        }
+        report = {}
+        worst_segments = []
+        for dimension, classifier in dimensions.items():
+            groups = {}
+            for sample in samples:
+                outcome = sample["outcomes"].get(horizon_key)
+                if outcome is None:
+                    continue
+                label = classifier(sample)
+                groups.setdefault(label, []).append(outcome)
+            report[dimension] = {
+                label: self._metrics(outcomes)
+                for label, outcomes in sorted(groups.items())
+            }
+            for label, metrics in report[dimension].items():
+                if metrics["observations"] >= 2:
+                    worst_segments.append({
+                        "dimension": dimension,
+                        "segment": label,
+                        **metrics,
+                    })
+        worst_segments.sort(key=lambda item: (
+            item["direction_hit_rate"], item["average_aligned_return"],
+            -item["observations"], item["dimension"], item["segment"],
+        ))
+        return {"dimensions": report, "worst_segments": worst_segments[:10]}
 
     def run(self, db: Session, name: str, start: date | None = None, end: date | None = None,
             max_events: int = 10, candidates_per_event: int = 20,
@@ -126,11 +175,13 @@ class EventImpactBacktestService:
                         )
                     samples.append(sample)
         metrics = {}
+        diagnostics = {}
         for horizon in horizons:
             key = f"{horizon}d"
             rows = [sample["outcomes"].get(key) for sample in samples
                     if sample["outcomes"].get(key) is not None]
             metrics[key] = self._metrics(rows)
+            diagnostics[key] = self._diagnostics(samples, key)
         frozen = {"version": self.version, "events": [event.external_id for event in events],
                   "horizons": list(horizons), "candidates_per_event": candidates_per_event,
                   "samples": samples}
@@ -143,6 +194,7 @@ class EventImpactBacktestService:
             "summary": {"events": len(events), "candidate_rows": len(samples),
                         "outcome_observations": observations},
             "metrics": metrics,
+            "diagnostics": diagnostics,
             "samples": samples,
             "failure_conditions": failure_conditions,
             "horizon_acceptance": horizon_acceptance,

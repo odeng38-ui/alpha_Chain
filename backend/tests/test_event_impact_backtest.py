@@ -49,6 +49,11 @@ def test_event_backtest_is_point_in_time_and_reproducible():
     assert first.dataset_hash == second.dataset_hash
     assert first.report["summary"] == {"events": 2, "candidate_rows": 2, "outcome_observations": 4}
     assert first.report["metrics"]["1d"]["direction_hit_rate"] == 1.0
+    assert first.report["metrics"]["1d"]["misses"] == 0
+    assert first.report["diagnostics"]["1d"]["dimensions"]["event_symbol"]["^SOX"][
+        "observations"
+    ] == 2
+    assert first.report["diagnostics"]["1d"]["worst_segments"][0]["dimension"]
     assert first.status == "FAILED_ACCEPTANCE"
     assert first.report["horizon_acceptance"]["1d"]["status"] == "FAILED"
     assert "INSUFFICIENT_OUTCOMES_1D" in first.report["failure_conditions"]
@@ -73,3 +78,37 @@ def test_horizon_acceptance_allows_five_day_model_only():
     assert acceptance["5d"]["status"] == "PASSED"
     assert status == "PARTIAL_ACCEPTANCE"
     assert "DIRECTION_HIT_RATE_BELOW_50_1D" in failures
+
+def test_diagnostics_rank_worst_segments_by_miss_rate():
+    samples = [
+        {
+            "event_symbol": "^SOX", "event_direction": "POSITIVE", "rank": 1,
+            "confidence": 0.8, "historical_sample_count": 8,
+            "outcomes": {"1d": {"raw_return": -0.02, "aligned_return": -0.02}},
+        },
+        {
+            "event_symbol": "^SOX", "event_direction": "POSITIVE", "rank": 2,
+            "confidence": 0.8, "historical_sample_count": 8,
+            "outcomes": {"1d": {"raw_return": -0.01, "aligned_return": -0.01}},
+        },
+        {
+            "event_symbol": "CL=F", "event_direction": "NEGATIVE", "rank": 8,
+            "confidence": 0.55, "historical_sample_count": 3,
+            "outcomes": {"1d": {"raw_return": -0.01, "aligned_return": 0.01}},
+        },
+        {
+            "event_symbol": "CL=F", "event_direction": "NEGATIVE", "rank": 9,
+            "confidence": 0.55, "historical_sample_count": 3,
+            "outcomes": {"1d": {"raw_return": -0.02, "aligned_return": 0.02}},
+        },
+    ]
+
+    report = EventImpactBacktestService()._diagnostics(samples, "1d")
+
+    assert report["dimensions"]["event_symbol"]["^SOX"]["miss_rate"] == 1.0
+    assert report["dimensions"]["event_symbol"]["CL=F"]["miss_rate"] == 0.0
+    symbol_segment = next(
+        item for item in report["worst_segments"]
+        if item["dimension"] == "event_symbol" and item["segment"] == "^SOX"
+    )
+    assert symbol_segment["miss_rate"] == 1.0

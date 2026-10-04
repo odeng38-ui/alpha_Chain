@@ -12,7 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.adapters.base import BrokerAdapter, OHLCVRecord
+from app.adapters.base import BrokerAdapter, DataNotFoundError, OHLCVRecord
 from app.db.session import Base
 from app.models.schema import (
     CollectionCheckpoint,
@@ -277,6 +277,33 @@ class TestIncrementalUpdate:
         _, start_date, end_date, _ = adapter.calls[0]
         assert end_date == date.today()
         assert start_date == date.today() - timedelta(days=30)
+
+    def test_incremental_treats_no_new_trading_session_as_success(self, db):
+        security = create_test_security(db)
+        last_date = date.today() - timedelta(days=1)
+        db.add(DailyPrice(
+            security_id=security.id, trade_date=last_date,
+            open=100, high=100, low=100, close=100, adjusted_close=100,
+        ))
+        db.commit()
+
+        class NoTradingSessionAdapter(MockAdapter):
+            def fetch_ohlcv(self, ticker, start_date, end_date, market="KOSPI"):
+                raise DataNotFoundError(f"No price data found for ticker={ticker}")
+
+        result = price_service.incremental_update(
+            db, [security.id], NoTradingSessionAdapter([]),
+        )
+        checkpoint = db.query(CollectionCheckpoint).filter_by(
+            job_name="daily_price", security_id=security.id,
+        ).one()
+
+        assert result.errors == []
+        assert result.updated_securities == 1
+        assert checkpoint.status == "SUCCESS"
+        assert checkpoint.last_success_date == last_date
+        assert checkpoint.last_error is None
+
 
 class TestIncrementalBatchUpdate:
     def test_batch_is_bounded_and_returns_cursor(self, db):

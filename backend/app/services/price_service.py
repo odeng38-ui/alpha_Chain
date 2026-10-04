@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session
 
-from app.adapters.base import AdapterError, BrokerAdapter
+from app.adapters.base import AdapterError, BrokerAdapter, DataNotFoundError
 from app.adapters.pykrx_adapter import PykrxAdapter
 from app.adapters.yahoo_adapter import YahooFinanceAdapter
 from app.config import settings
@@ -311,6 +311,22 @@ def incremental_update(
                 "[증분] %s: %s ~ %s → 적재 %d건",
                 sec.ticker, start, today, inserted_count,
             )
+
+        except DataNotFoundError as exc:
+            db.rollback()
+            if last_date is not None:
+                _save_checkpoint(db, sec.id, "SUCCESS", last_date)
+                db.commit()
+                result.updated_securities += 1
+                logger.info(
+                    "[incremental] %s: no new trading session after %s",
+                    sec.ticker, last_date,
+                )
+                continue
+            err_msg = f"security_id={sec.id} ticker={sec.ticker}: {exc}"
+            result.errors.append(err_msg)
+            _save_checkpoint(db, sec.id, "FAILED", error=err_msg)
+            db.commit()
 
         except AdapterError as exc:
             db.rollback()

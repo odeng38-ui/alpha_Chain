@@ -12,6 +12,7 @@ from app.services.master_lifecycle_service import (
     build_master_lifecycle_report,
     compare_master_to_kind_snapshot,
     fetch_kind_listings,
+    normalize_kind_listings,
 )
 from app.services.monitoring import build_operational_alerts
 
@@ -41,6 +42,31 @@ def master_lifecycle_krx_preview(
     return compare_master_to_kind_snapshot(
         db,
         listings,
+        sample_limit=sample_limit,
+    )
+
+class KindListingItem(BaseModel):
+    name: str
+    market: str
+    ticker: str
+    listed_at: str
+
+
+@router.post("/master-lifecycle/krx-preview")
+def master_lifecycle_krx_preview_upload(
+    listings: list[KindListingItem],
+    sample_limit: int = Query(30, ge=0, le=100),
+    db: Session = Depends(get_db),
+):
+    try:
+        normalized = normalize_kind_listings([
+            item.model_dump() for item in listings
+        ])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return compare_master_to_kind_snapshot(
+        db,
+        normalized,
         sample_limit=sample_limit,
     )
 

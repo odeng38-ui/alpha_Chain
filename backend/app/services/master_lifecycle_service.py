@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections import Counter, defaultdict
+from datetime import date
+from html.parser import HTMLParser
 from typing import Any
 
+import httpx
 from sqlalchemy.orm import Session
 
 from app.models.schema import CollectionCheckpoint, Company, DailyPrice, Security
@@ -108,5 +112,173 @@ def build_master_lifecycle_report(db: Session, sample_limit: int = 30) -> dict[s
             "mode": "read_only",
             "auto_close_enabled": False,
             "closure_requirement": "confirmed absent from a complete KRX listing snapshot",
+        },
+    }
+
+KIND_CORP_LIST_URL = "https://kind.krx.co.kr/corpgeneral/corpList.do"
+KIND_MARKETS = {"유가": "KOSPI", "코스닥": "KOSDAQ"}
+
+
+class _KindTableParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[list[str]] = []
+        self._row: list[str] | None = None
+        self._cell: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "tr":
+            self._row = []
+        elif tag in {"td", "th"} and self._row is not None:
+            self._cell = []
+
+    def handle_data(self, data: str) -> None:
+        if self._cell is not None:
+            self._cell.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"td", "th"} and self._cell is not None and self._row is not None:
+            self._row.append(" ".join("".join(self._cell).split()))
+            self._cell = None
+        elif tag == "tr" and self._row is not None:
+            if self._row:
+                self.rows.append(self._row)
+            self._row = None
+
+
+def parse_kind_listings(content: bytes) -> list[dict[str, str]]:
+    parser = _KindTableParser()
+    parser.feed(content.decode("euc-kr", errors="replace"))
+    records = []
+    for row in parser.rows[1:]:
+        if len(row) < 6:
+            continue
+        market = KIND_MARKETS.get(row[1])
+        ticker = row[2].strip()
+        if market and len(ticker) == 6:
+            records.append({
+                "name": row[0],
+                "market": market,
+                "ticker": ticker,
+                "listed_at": row[5],
+            })
+    return records
+
+
+def normalize_kind_listings(listings: list[dict[str, str]]) -> list[dict[str, str]]:
+    by_ticker: dict[str, dict[str, str]] = {}
+    for row in listings:
+        existing = by_ticker.get(row["ticker"])
+        if existing is not None and existing != row:
+            raise ValueError(f"conflicting KIND rows for ticker={row['ticker']}")
+        by_ticker[row["ticker"]] = row
+    if len(by_ticker) < 1000:
+        raise ValueError("KIND listing snapshot is incomplete")
+    return list(by_ticker.values())
+
+
+def fetch_kind_listings(timeout: float = 60.0) -> list[dict[str, str]]:
+    response = httpx.get(
+        KIND_CORP_LIST_URL,
+        params={"method": "download", "searchType": "13"},
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return normalize_kind_listings(parse_kind_listings(response.content))
+
+
+def compare_master_to_kind_snapshot(
+    db: Session,
+    listings: list[dict[str, str]],
+    *,
+    as_of: date | None = None,
+    sample_limit: int = 30,
+) -> dict[str, Any]:
+    as_of = as_of or date.today()
+    snapshot = {row["ticker"]: row for row in listings}
+    active = db.query(Security, Company).join(
+        Company, Company.id == Security.company_id,
+    ).filter(
+        Security.security_type == "COMMON",
+        Security.effective_to.is_(None),
+    ).all()
+    active_by_ticker = {security.ticker: (security, company) for security, company in active}
+    priced_ids = {
+        row[0] for row in db.query(DailyPrice.security_id).distinct().all()
+    }
+    checkpoints = {
+        row.security_id: row
+        for row in db.query(CollectionCheckpoint).filter(
+            CollectionCheckpoint.job_name == "daily_price",
+        ).all()
+    }
+
+    confirmed_listed = []
+    absent = []
+    close_candidates = []
+    market_mismatches = []
+    for ticker, (security, company) in active_by_ticker.items():
+        listing = snapshot.get(ticker)
+        if listing:
+            confirmed_listed.append(ticker)
+            if security.market not in {"UNKNOWN", listing["market"]}:
+                market_mismatches.append({
+                    "security_id": security.id,
+                    "ticker": ticker,
+                    "stored_market": security.market,
+                    "snapshot_market": listing["market"],
+                })
+            continue
+
+        item = {
+            "security_id": security.id,
+            "ticker": ticker,
+            "company_name": company.name,
+            "market": security.market,
+        }
+        absent.append(item)
+        checkpoint = checkpoints.get(security.id)
+        no_price_failure = (
+            checkpoint is not None
+            and (checkpoint.status or "").upper() in FAILURE_STATUSES
+            and "no price data found" in (checkpoint.last_error or "").lower()
+        )
+        if security.id not in priced_ids and no_price_failure:
+            close_candidates.append(item)
+
+    new_tickers = sorted(set(snapshot) - set(active_by_ticker))
+    payload_hash = hashlib.sha256(
+        "\n".join(sorted(snapshot)).encode()
+    ).hexdigest()
+    return {
+        "snapshot": {
+            "source": "KRX_KIND",
+            "as_of": as_of,
+            "total": len(listings),
+            "kospi": sum(row["market"] == "KOSPI" for row in listings),
+            "kosdaq": sum(row["market"] == "KOSDAQ" for row in listings),
+            "sha256": payload_hash,
+        },
+        "comparison": {
+            "active_common": len(active),
+            "confirmed_listed": len(confirmed_listed),
+            "absent_from_snapshot": len(absent),
+            "safe_close_candidates": len(close_candidates),
+            "new_snapshot_tickers": len(new_tickers),
+            "market_mismatches": len(market_mismatches),
+        },
+        "samples": {
+            "absent_from_snapshot": absent[:sample_limit],
+            "safe_close_candidates": close_candidates[:sample_limit],
+            "new_snapshot_tickers": [
+                snapshot[ticker] for ticker in new_tickers[:sample_limit]
+            ],
+            "market_mismatches": market_mismatches[:sample_limit],
+        },
+        "policy": {
+            "mode": "preview",
+            "mutations_applied": False,
+            "close_requires_explicit_apply": True,
         },
     }

@@ -19,7 +19,12 @@ from app.models.schema import (
     MacroObservation,
     Security,
 )
-from app.services.master_lifecycle_service import build_master_lifecycle_report
+from app.services.master_lifecycle_service import (
+    build_master_lifecycle_report,
+    compare_master_to_kind_snapshot,
+    normalize_kind_listings,
+    parse_kind_listings,
+)
 from app.services.monitoring import build_operational_alerts
 
 engine = create_engine(
@@ -280,3 +285,79 @@ def test_master_lifecycle_report_is_read_only_and_classifies_candidates(db):
     assert report["categories"]["unattempted"] == 1
     assert report["policy"]["auto_close_enabled"] is False
     assert all(security.effective_to is None for security in securities)
+
+def test_parse_kind_listings_reads_official_excel_html():
+    html = """
+    <table>
+      <tr><th>회사명</th><th>시장구분</th><th>종목코드</th><th>업종</th><th>제품</th><th>상장일</th></tr>
+      <tr><td>Alpha</td><td>유가</td><td>000001</td><td>A</td><td>P</td><td>2020-01-01</td></tr>
+      <tr><td>Beta</td><td>코스닥</td><td>0000A2</td><td>B</td><td>Q</td><td>2021-01-01</td></tr>
+      <tr><td>Konex</td><td>코넥스</td><td>000003</td><td>C</td><td>R</td><td>2022-01-01</td></tr>
+    </table>
+    """.encode("euc-kr")
+
+    assert parse_kind_listings(html) == [
+        {"name": "Alpha", "market": "KOSPI", "ticker": "000001", "listed_at": "2020-01-01"},
+        {"name": "Beta", "market": "KOSDAQ", "ticker": "0000A2", "listed_at": "2021-01-01"},
+    ]
+
+
+def test_kind_snapshot_comparison_is_preview_only(db):
+    companies = [Company(name="Listed"), Company(name="Legacy")]
+    db.add_all(companies)
+    db.flush()
+    listed = Security(
+        company_id=companies[0].id,
+        market="UNKNOWN",
+        ticker="000001",
+        security_type="COMMON",
+    )
+    legacy = Security(
+        company_id=companies[1].id,
+        market="UNKNOWN",
+        ticker="000002",
+        security_type="COMMON",
+    )
+    db.add_all([listed, legacy])
+    db.flush()
+    db.add(CollectionCheckpoint(
+        job_name="daily_price",
+        security_id=legacy.id,
+        status="FAILED",
+        last_error="No price data found for ticker=000002",
+    ))
+    db.commit()
+
+    report = compare_master_to_kind_snapshot(
+        db,
+        [
+            {"name": "Listed", "market": "KOSPI", "ticker": "000001", "listed_at": "2020-01-01"},
+            {"name": "New", "market": "KOSDAQ", "ticker": "000003", "listed_at": "2026-01-01"},
+        ],
+        as_of=date(2026, 10, 5),
+    )
+
+    assert report["comparison"] == {
+        "active_common": 2,
+        "confirmed_listed": 1,
+        "absent_from_snapshot": 1,
+        "safe_close_candidates": 1,
+        "new_snapshot_tickers": 1,
+        "market_mismatches": 0,
+    }
+    assert report["policy"]["mutations_applied"] is False
+    assert legacy.effective_to is None
+
+def test_kind_snapshot_normalization_deduplicates_only_identical_rows():
+    row = {"name": "Alpha", "market": "KOSPI", "ticker": "000001", "listed_at": "2020-01-01"}
+    filler = [
+        {"name": f"Corp {index}", "market": "KOSDAQ", "ticker": f"{index:06d}", "listed_at": "2020-01-01"}
+        for index in range(2, 1002)
+    ]
+
+    normalized = normalize_kind_listings([row, row.copy(), *filler])
+
+    assert len(normalized) == 1001
+    conflicting = {**row, "market": "KOSDAQ"}
+    with pytest.raises(ValueError, match="conflicting KIND rows"):
+        normalize_kind_listings([row, conflicting, *filler])

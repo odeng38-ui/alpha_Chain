@@ -1,5 +1,6 @@
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -7,7 +8,11 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.schema import AuditLog, IdentifierMap, Security
 from app.security import require_admin
-from app.services.master_lifecycle_service import build_master_lifecycle_report
+from app.services.master_lifecycle_service import (
+    build_master_lifecycle_report,
+    compare_master_to_kind_snapshot,
+    fetch_kind_listings,
+)
 from app.services.monitoring import build_operational_alerts
 
 router = APIRouter(prefix="/admin", tags=["Admin & Manual Mapping"], dependencies=[Depends(require_admin)])
@@ -23,6 +28,21 @@ def master_lifecycle_report(
     db: Session = Depends(get_db),
 ):
     return build_master_lifecycle_report(db, sample_limit=sample_limit)
+
+@router.get("/master-lifecycle/krx-preview")
+def master_lifecycle_krx_preview(
+    sample_limit: int = Query(30, ge=0, le=100),
+    db: Session = Depends(get_db),
+):
+    try:
+        listings = fetch_kind_listings()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return compare_master_to_kind_snapshot(
+        db,
+        listings,
+        sample_limit=sample_limit,
+    )
 
 
 class IdentifierCreateRequest(BaseModel):

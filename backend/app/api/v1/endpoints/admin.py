@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.models.schema import AuditLog, IdentifierMap, Security
 from app.security import require_admin
 from app.services.master_lifecycle_service import (
+    apply_master_lifecycle_snapshot,
     build_master_lifecycle_report,
     compare_master_to_kind_snapshot,
     fetch_kind_listings,
@@ -51,6 +52,13 @@ class KindListingItem(BaseModel):
     ticker: str
     listed_at: str
 
+class KindLifecycleApplyRequest(BaseModel):
+    listings: list[KindListingItem]
+    confirm_sha256: str
+    expected_safe_close_candidates: int
+    expected_confirmed_listed: int
+    confirmation: str
+
 
 @router.post("/master-lifecycle/krx-preview")
 def master_lifecycle_krx_preview_upload(
@@ -70,6 +78,29 @@ def master_lifecycle_krx_preview_upload(
         sample_limit=sample_limit,
     )
 
+
+
+
+@router.post("/master-lifecycle/krx-apply")
+def master_lifecycle_krx_apply(
+    request: KindLifecycleApplyRequest,
+    db: Session = Depends(get_db),
+):
+    if request.confirmation != "APPLY_KRX_MASTER_LIFECYCLE":
+        raise HTTPException(status_code=400, detail="explicit confirmation is required")
+    try:
+        normalized = normalize_kind_listings([
+            item.model_dump() for item in request.listings
+        ])
+        return apply_master_lifecycle_snapshot(
+            db,
+            normalized,
+            expected_sha256=request.confirm_sha256,
+            expected_safe_close_candidates=request.expected_safe_close_candidates,
+            expected_confirmed_listed=request.expected_confirmed_listed,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 class IdentifierCreateRequest(BaseModel):
     company_id: Optional[int] = None

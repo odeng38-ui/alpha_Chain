@@ -11,7 +11,13 @@ from typing import Any
 import httpx
 from sqlalchemy.orm import Session
 
-from app.models.schema import CollectionCheckpoint, Company, DailyPrice, Security
+from app.models.schema import (
+    AuditLog,
+    CollectionCheckpoint,
+    Company,
+    DailyPrice,
+    Security,
+)
 
 FAILURE_STATUSES = {"FAILED", "ERROR"}
 
@@ -280,5 +286,116 @@ def compare_master_to_kind_snapshot(
             "mode": "preview",
             "mutations_applied": False,
             "close_requires_explicit_apply": True,
+        },
+    }
+
+def apply_master_lifecycle_snapshot(
+    db: Session,
+    listings: list[dict[str, str]],
+    *,
+    expected_sha256: str,
+    expected_safe_close_candidates: int,
+    expected_confirmed_listed: int,
+    as_of: date | None = None,
+) -> dict[str, Any]:
+    """Apply a previously previewed KIND snapshot with strict count/hash guards."""
+    as_of = as_of or date.today()
+    preview = compare_master_to_kind_snapshot(db, listings, as_of=as_of, sample_limit=0)
+    snapshot = preview["snapshot"]
+    comparison = preview["comparison"]
+    if snapshot["sha256"] != expected_sha256:
+        raise ValueError("snapshot hash does not match the confirmed preview")
+    if comparison["safe_close_candidates"] != expected_safe_close_candidates:
+        raise ValueError("safe-close count changed after preview")
+    if comparison["confirmed_listed"] != expected_confirmed_listed:
+        raise ValueError("confirmed-listed count changed after preview")
+
+    snapshot_by_ticker = {row["ticker"]: row for row in listings}
+    active = db.query(Security).filter(
+        Security.security_type == "COMMON",
+        Security.effective_to.is_(None),
+    ).all()
+    priced_ids = {
+        row[0] for row in db.query(DailyPrice.security_id).distinct().all()
+    }
+    checkpoints = {
+        row.security_id: row
+        for row in db.query(CollectionCheckpoint).filter(
+            CollectionCheckpoint.job_name == "daily_price",
+        ).all()
+    }
+
+    market_updated = 0
+    closed_ids: list[int] = []
+    affected_company_ids: set[int] = set()
+    for security in active:
+        listing = snapshot_by_ticker.get(security.ticker)
+        if listing is not None:
+            if security.market != listing["market"]:
+                security.market = listing["market"]
+                market_updated += 1
+            continue
+
+        checkpoint = checkpoints.get(security.id)
+        no_price_failure = (
+            checkpoint is not None
+            and (checkpoint.status or "").upper() in FAILURE_STATUSES
+            and "no price data found" in (checkpoint.last_error or "").lower()
+        )
+        if security.id in priced_ids or not no_price_failure:
+            continue
+        security.effective_to = as_of
+        security.delisted_at = security.delisted_at or as_of
+        for identifier in security.identifier_maps:
+            if identifier.effective_to is None:
+                identifier.effective_to = as_of
+        closed_ids.append(security.id)
+        affected_company_ids.add(security.company_id)
+
+    companies_closed = 0
+    for company_id in affected_company_ids:
+        has_active_security = db.query(Security.id).filter(
+            Security.company_id == company_id,
+            Security.effective_to.is_(None),
+        ).first() is not None
+        if not has_active_security:
+            company = db.get(Company, company_id)
+            if company is not None and company.status != "DELISTED":
+                company.status = "DELISTED"
+                companies_closed += 1
+
+    if len(closed_ids) != expected_safe_close_candidates:
+        db.rollback()
+        raise ValueError("applied close count differs from confirmed preview")
+
+    db.add(AuditLog(
+        actor="admin-api",
+        action="apply_master_lifecycle",
+        resource_type="krx_kind_snapshot",
+        resource_id=snapshot["sha256"],
+        before_state={
+            "active_common": comparison["active_common"],
+            "safe_close_candidates": expected_safe_close_candidates,
+            "confirmed_listed": expected_confirmed_listed,
+        },
+        after_state={
+            "securities_closed": len(closed_ids),
+            "markets_updated": market_updated,
+            "companies_closed": companies_closed,
+        },
+        request_id=f"master-lifecycle-{snapshot['sha256'][:16]}",
+    ))
+    db.commit()
+    return {
+        "snapshot": snapshot,
+        "applied": {
+            "securities_closed": len(closed_ids),
+            "markets_updated": market_updated,
+            "companies_closed": companies_closed,
+        },
+        "policy": {
+            "mode": "applied",
+            "deletions": 0,
+            "reversible": True,
         },
     }

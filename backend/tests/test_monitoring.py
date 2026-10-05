@@ -16,10 +16,12 @@ from app.models.schema import (
     DailyPrice,
     DartSyncState,
     Filing,
+    IdentifierMap,
     MacroObservation,
     Security,
 )
 from app.services.master_lifecycle_service import (
+    apply_master_lifecycle_snapshot,
     build_master_lifecycle_report,
     compare_master_to_kind_snapshot,
     normalize_kind_listings,
@@ -361,3 +363,101 @@ def test_kind_snapshot_normalization_deduplicates_only_identical_rows():
     conflicting = {**row, "market": "KOSDAQ"}
     with pytest.raises(ValueError, match="conflicting KIND rows"):
         normalize_kind_listings([row, conflicting, *filler])
+
+def test_apply_master_lifecycle_snapshot_is_guarded_and_reversible(db):
+    listed_company = Company(name="Listed")
+    legacy_company = Company(name="Legacy")
+    db.add_all([listed_company, legacy_company])
+    db.flush()
+    listed = Security(
+        company_id=listed_company.id,
+        market="UNKNOWN",
+        ticker="000001",
+        security_type="COMMON",
+    )
+    legacy = Security(
+        company_id=legacy_company.id,
+        market="UNKNOWN",
+        ticker="000002",
+        security_type="COMMON",
+    )
+    db.add_all([listed, legacy])
+    db.flush()
+    db.add(IdentifierMap(
+        company_id=legacy_company.id,
+        security_id=legacy.id,
+        source="KRX_TICKER",
+        source_id_value="000002",
+    ))
+    db.add(CollectionCheckpoint(
+        job_name="daily_price",
+        security_id=legacy.id,
+        status="FAILED",
+        last_error="No price data found for ticker=000002",
+    ))
+    db.commit()
+    listings = [
+        {"name": "Listed", "market": "KOSPI", "ticker": "000001", "listed_at": "2020-01-01"},
+    ]
+    preview = compare_master_to_kind_snapshot(
+        db,
+        listings,
+        as_of=date(2026, 10, 5),
+    )
+
+    result = apply_master_lifecycle_snapshot(
+        db,
+        listings,
+        expected_sha256=preview["snapshot"]["sha256"],
+        expected_safe_close_candidates=1,
+        expected_confirmed_listed=1,
+        as_of=date(2026, 10, 5),
+    )
+
+    assert result["applied"] == {
+        "securities_closed": 1,
+        "markets_updated": 1,
+        "companies_closed": 1,
+    }
+    assert listed.market == "KOSPI"
+    assert legacy.effective_to == date(2026, 10, 5)
+    assert legacy.delisted_at == date(2026, 10, 5)
+    assert legacy.identifier_maps[0].effective_to == date(2026, 10, 5)
+    assert legacy_company.status == "DELISTED"
+    audit = db.query(AuditLog).filter(
+        AuditLog.action == "apply_master_lifecycle",
+    ).one()
+    assert audit.after_state["securities_closed"] == 1
+
+
+def test_apply_master_lifecycle_snapshot_rejects_changed_preview(db):
+    company = Company(name="Legacy")
+    db.add(company)
+    db.flush()
+    security = Security(
+        company_id=company.id,
+        market="UNKNOWN",
+        ticker="000002",
+        security_type="COMMON",
+    )
+    db.add(security)
+    db.flush()
+    db.add(CollectionCheckpoint(
+        job_name="daily_price",
+        security_id=security.id,
+        status="FAILED",
+        last_error="No price data found for ticker=000002",
+    ))
+    db.commit()
+
+    with pytest.raises(ValueError, match="snapshot hash"):
+        apply_master_lifecycle_snapshot(
+            db,
+            [],
+            expected_sha256="wrong",
+            expected_safe_close_candidates=1,
+            expected_confirmed_listed=0,
+            as_of=date(2026, 10, 5),
+        )
+
+    assert security.effective_to is None

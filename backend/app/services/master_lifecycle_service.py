@@ -46,12 +46,12 @@ def build_master_lifecycle_report(db: Session, sample_limit: int = 30) -> dict[s
             and "no price data found" in (checkpoint.last_error or "").lower()
         )
 
-        if not ticker_valid:
-            category = "invalid_ticker"
-        elif (company.status or "ACTIVE").upper() != "ACTIVE":
+        if (company.status or "ACTIVE").upper() != "ACTIVE":
             category = "status_mismatch"
         elif security.id in priced_ids:
             category = "priced"
+        elif not ticker_valid:
+            category = "invalid_ticker"
         elif no_price_error:
             category = "unavailable_candidate"
         elif failed:

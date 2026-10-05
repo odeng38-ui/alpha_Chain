@@ -237,7 +237,7 @@ def test_master_lifecycle_report_is_read_only_and_classifies_candidates(db):
     db.add_all(companies)
     db.flush()
     securities = [
-        Security(company_id=companies[0].id, market="KOSPI", ticker="000001"),
+        Security(company_id=companies[0].id, market="KOSPI", ticker="0000A1"),
         Security(company_id=companies[1].id, market="KOSDAQ", ticker="000002"),
         Security(company_id=companies[2].id, market="KOSPI", ticker="000003"),
         Security(company_id=companies[3].id, market="KOSDAQ", ticker="000004"),

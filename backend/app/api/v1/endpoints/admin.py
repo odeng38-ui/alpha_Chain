@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.schema import AuditLog, IdentifierMap, Security
 from app.security import require_admin
+from app.services.master_lifecycle_service import build_master_lifecycle_report
 from app.services.monitoring import build_operational_alerts
 
 router = APIRouter(prefix="/admin", tags=["Admin & Manual Mapping"], dependencies=[Depends(require_admin)])
@@ -15,6 +16,13 @@ router = APIRouter(prefix="/admin", tags=["Admin & Manual Mapping"], dependencie
 @router.get("/alerts")
 def operational_alerts(db: Session = Depends(get_db)):
     return build_operational_alerts(db)
+
+@router.get("/master-lifecycle")
+def master_lifecycle_report(
+    sample_limit: int = Query(30, ge=0, le=100),
+    db: Session = Depends(get_db),
+):
+    return build_master_lifecycle_report(db, sample_limit=sample_limit)
 
 
 class IdentifierCreateRequest(BaseModel):

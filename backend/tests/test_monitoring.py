@@ -19,6 +19,7 @@ from app.models.schema import (
     MacroObservation,
     Security,
 )
+from app.services.master_lifecycle_service import build_master_lifecycle_report
 from app.services.monitoring import build_operational_alerts
 
 engine = create_engine(
@@ -224,3 +225,58 @@ def test_price_recovery_distinguishes_retryable_and_action_required(db):
         "retry_after_days": 7,
         "status": "action_required",
     }
+
+
+def test_master_lifecycle_report_is_read_only_and_classifies_candidates(db):
+    companies = [
+        Company(name="Priced Corp"),
+        Company(name="Unavailable Corp"),
+        Company(name="Closed Corp", status="DELISTED"),
+        Company(name="Unattempted Corp"),
+    ]
+    db.add_all(companies)
+    db.flush()
+    securities = [
+        Security(company_id=companies[0].id, market="KOSPI", ticker="000001"),
+        Security(company_id=companies[1].id, market="KOSDAQ", ticker="000002"),
+        Security(company_id=companies[2].id, market="KOSPI", ticker="000003"),
+        Security(company_id=companies[3].id, market="KOSDAQ", ticker="000004"),
+    ]
+    db.add_all(securities)
+    db.flush()
+    db.add(DailyPrice(
+        security_id=securities[0].id,
+        trade_date=date(2026, 10, 2),
+        close=100,
+    ))
+    db.add_all([
+        CollectionCheckpoint(
+            job_name="daily_price",
+            security_id=securities[1].id,
+            status="FAILED",
+            last_error="No price data found for ticker=000002",
+        ),
+        CollectionCheckpoint(
+            job_name="daily_price",
+            security_id=securities[2].id,
+            status="SUCCESS",
+            last_success_date=date(2026, 10, 2),
+        ),
+    ])
+    db.commit()
+
+    report = build_master_lifecycle_report(db, sample_limit=1)
+
+    assert report["summary"] == {
+        "active_common": 4,
+        "priced": 1,
+        "unresolved": 3,
+        "coverage_percent": 25.0,
+        "safe_to_auto_close": 0,
+    }
+    assert report["categories"]["priced"] == 1
+    assert report["categories"]["unavailable_candidate"] == 1
+    assert report["categories"]["status_mismatch"] == 1
+    assert report["categories"]["unattempted"] == 1
+    assert report["policy"]["auto_close_enabled"] is False
+    assert all(security.effective_to is None for security in securities)

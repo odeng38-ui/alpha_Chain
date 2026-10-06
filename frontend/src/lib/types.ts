@@ -90,10 +90,12 @@ export type NewsImpactStatus = {
   updated_at: string | null;
   one_day: {
     observations: number;
+    independent_events: number;
     eligible_candidates: number;
     pending_candidates: number;
     outcome_coverage_rate: number;
     minimum_outcome_coverage: number;
+    minimum_independent_events: number;
     direction_hit_rate: number | null;
     average_market_excess: number | null;
     acceptance_status: string;

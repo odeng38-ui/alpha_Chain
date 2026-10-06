@@ -176,9 +176,9 @@ def test_news_impact_status_exposes_readiness_without_internal_samples():
         name="daily", score_version="news-link-v1", horizon="1d,5d,20d",
         config={}, dataset_hash="a" * 64, status="INSUFFICIENT_SAMPLE",
         report={
-            "summary": {"minimum_outcome_coverage": 0.8},
+            "summary": {"minimum_outcome_coverage": 0.8, "minimum_independent_events": 30},
             "metrics": {"1d": {
-                "observations": 38, "eligible_candidates": 120,
+                "observations": 38, "independent_events": 8, "eligible_candidates": 120,
                 "pending_candidates": 82, "outcome_coverage_rate": 0.316667,
                 "direction_hit_rate": 0.578947,
                 "average_market_excess": -0.00093937,
@@ -196,6 +196,8 @@ def test_news_impact_status_exposes_readiness_without_internal_samples():
     assert response["status"] == "VALIDATING"
     assert response["candidate_quality_status"] == "PASSED"
     assert response["one_day"]["observations"] == 38
+    assert response["one_day"]["independent_events"] == 8
+    assert response["one_day"]["minimum_independent_events"] == 30
     assert response["one_day"]["pending_candidates"] == 82
     assert response["one_day"]["outcome_coverage_rate"] == pytest.approx(0.316667)
     assert "samples" not in response

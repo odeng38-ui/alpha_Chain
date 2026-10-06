@@ -156,11 +156,15 @@ def news_impact_status(db: Session = Depends(get_db)):
         "updated_at": backtest.created_at.isoformat() if backtest else None,
         "one_day": {
             "observations": metric.get("observations", 0),
+            "independent_events": metric.get("independent_events", 0),
             "eligible_candidates": metric.get("eligible_candidates", 0),
             "pending_candidates": metric.get("pending_candidates", 0),
             "outcome_coverage_rate": metric.get("outcome_coverage_rate", 0.0),
             "minimum_outcome_coverage": (report.get("summary") or {}).get(
                 "minimum_outcome_coverage", 0.8,
+            ),
+            "minimum_independent_events": (report.get("summary") or {}).get(
+                "minimum_independent_events", 30,
             ),
             "direction_hit_rate": metric.get("direction_hit_rate"),
             "average_market_excess": metric.get("average_market_excess"),

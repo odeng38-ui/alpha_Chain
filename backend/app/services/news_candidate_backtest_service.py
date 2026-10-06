@@ -21,6 +21,7 @@ from app.models.schema import (
 class NewsCandidateBacktestService:
     version = "news-link-v1"
     minimum_observations = 30
+    minimum_independent_events = 30
     minimum_outcome_coverage = 0.80
     transaction_cost = 0.003
 
@@ -214,6 +215,11 @@ class NewsCandidateBacktestService:
                     outcome[field] = round(outcome[field], 10)
                 outcomes.append(outcome)
             metrics[key] = self._metrics(outcomes)
+            independent_events = len({
+                sample["article_id"] for sample in samples
+                if sample["outcomes"][key] is not None
+            })
+            metrics[key]["independent_events"] = independent_events
             outcome_coverage = len(outcomes) / len(samples) if samples else 0.0
             metrics[key]["eligible_candidates"] = len(samples)
             metrics[key]["pending_candidates"] = len(samples) - len(outcomes)
@@ -222,6 +228,10 @@ class NewsCandidateBacktestService:
             readiness_reasons = []
             if len(outcomes) < self.minimum_observations:
                 readiness_reasons.append(f"OBSERVATIONS_BELOW_{self.minimum_observations}")
+            if independent_events < self.minimum_independent_events:
+                readiness_reasons.append(
+                    f"INDEPENDENT_EVENTS_BELOW_{self.minimum_independent_events}"
+                )
             if outcome_coverage < self.minimum_outcome_coverage:
                 readiness_reasons.append("OUTCOME_COVERAGE_BELOW_80")
             if readiness_reasons:
@@ -251,6 +261,7 @@ class NewsCandidateBacktestService:
                 "directional_candidates": len(samples),
                 "transaction_cost": self.transaction_cost,
                 "minimum_observations": self.minimum_observations,
+                "minimum_independent_events": self.minimum_independent_events,
                 "minimum_outcome_coverage": self.minimum_outcome_coverage,
             },
             "metrics": metrics, "diagnostics": diagnostics,
@@ -262,6 +273,7 @@ class NewsCandidateBacktestService:
                 "next_session_open_entry": True,
                 "future_prices_only_for_outcome": True,
                 "transaction_cost_applied": True,
+                "independent_event_gate": True,
             },
         }
         run = BacktestRun(

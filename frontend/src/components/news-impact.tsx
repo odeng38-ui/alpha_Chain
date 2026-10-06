@@ -43,6 +43,7 @@ const ko = {
   notRun: '\uC131\uACFC \uAC80\uC99D \uC804',
   coverage: '\u0031\uC77C \uAD00\uCE21\uB960',
   observed: '\uAD00\uCE21',
+  independentEvents: '\uB3C5\uB9BD \uB274\uC2A4',
   pending: '\uB300\uAE30',
   disclaimer: '\uD1B5\uACC4 \uAC80\uC99D \uC804 \uD6C4\uBCF4\uB294 \uD22C\uC790 \uAD8C\uC720\uAC00 \uC544\uB2D9\uB2C8\uB2E4.',
 };
@@ -99,7 +100,7 @@ export function NewsImpact({ candidates, status, onSelectTicker }: Props) {
     <section className={`impact-validation ${status?.status.toLowerCase() ?? 'not_run'}`}>
       <ShieldAlert size={20} />
       <div><strong>{validationLabel(status)}</strong><p>{ko.disclaimer}</p></div>
-      <dl><div><dt>{ko.coverage}</dt><dd>{(coverage * 100).toFixed(1)}%</dd></div><div><dt>{ko.observed}</dt><dd>{status?.one_day.observations ?? 0}/{status?.one_day.eligible_candidates ?? directionalCandidates.length}</dd></div><div><dt>{ko.pending}</dt><dd>{status?.one_day.pending_candidates ?? directionalCandidates.length}</dd></div></dl>
+      <dl><div><dt>{ko.coverage}</dt><dd>{(coverage * 100).toFixed(1)}%</dd></div><div><dt>{ko.observed}</dt><dd>{status?.one_day.observations ?? 0}/{status?.one_day.eligible_candidates ?? directionalCandidates.length}</dd></div><div><dt>{ko.independentEvents}</dt><dd>{status?.one_day.independent_events ?? 0}/{status?.one_day.minimum_independent_events ?? 30}</dd></div><div><dt>{ko.pending}</dt><dd>{status?.one_day.pending_candidates ?? directionalCandidates.length}</dd></div></dl>
     </section>
 
     <section className="news-impact-summary">

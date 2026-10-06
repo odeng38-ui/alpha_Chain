@@ -101,6 +101,8 @@ def test_backtest_uses_next_korean_session_open_and_marks_small_sample():
     assert sample["confidence"] == 0.8
     assert sample["event_kind"] == "MARKET_MOVEMENT"
     assert run.report["metrics"]["1d"]["observations"] == 1
+    assert run.report["metrics"]["1d"]["independent_events"] == 1
+    assert run.report["summary"]["minimum_independent_events"] == 30
     assert run.report["metrics"]["1d"]["outcome_coverage_rate"] == 1.0
     assert run.report["metrics"]["1d"]["pending_candidates"] == 0
     diagnostics = run.report["diagnostics"]["1d"]
@@ -170,6 +172,7 @@ def test_backtest_waits_when_outcome_coverage_is_too_low():
     db.commit()
     service = NewsCandidateBacktestService()
     service.minimum_observations = 1
+    service.minimum_independent_events = 1
 
     run = service.run(db, "coverage gate", horizons=(1,))
 

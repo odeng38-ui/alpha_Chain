@@ -146,7 +146,7 @@ class PykrxAdapter(BrokerAdapter):
                 open=float(row_adj.get("시가") or 0) or None,
                 high=float(row_adj.get("고가") or 0) or None,
                 low=float(row_adj.get("저가") or 0) or None,
-                close=orig_close,           # 비수정 종가
+                close=orig_close or adj_close,  # Fall back when raw KRX data is unavailable.
                 volume=int(row_adj.get("거래량") or 0) or None,
                 value=value,
                 adjusted_close=adj_close,   # 수정주가

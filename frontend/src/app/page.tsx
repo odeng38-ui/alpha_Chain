@@ -81,6 +81,33 @@ export default function Home() {
       .finally(() => setLoading(false));
   }, [selectedCompanyId, view, asOf, direction, hops, refreshKey]);
 
+  const selectNewsTicker = useCallback(async (ticker: string) => {
+    let company = companies.find((item) => item.securities.some((security) => security.ticker === ticker));
+
+    if (!company) {
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await getCompanies(ticker);
+        company = result.data.find((item) => item.securities.some((security) => security.ticker === ticker));
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : '종목 정보를 불러오는 중 오류가 발생했습니다.');
+        setLoading(false);
+        return;
+      }
+    }
+
+    if (!company) {
+      setError(`종목코드 ${ticker}에 해당하는 기업을 찾을 수 없습니다.`);
+      setLoading(false);
+      return;
+    }
+
+    setCompanies((current) => current.some((item) => item.company_id === company.company_id) ? current : [...current, company]);
+    setSelectedCompanyId(company.company_id);
+    setView('company');
+  }, [companies]);
+
   const filtered = companies;
   const selectedCompany = companies.find((item) => item.company_id === selectedCompanyId);
 
@@ -147,10 +174,7 @@ export default function Home() {
           {loading ? <LoadingState />
             : error ? <ErrorState message={error} retry={() => setRefreshKey((value) => value + 1)} />
               : view === 'market' && dashboard ? <MarketDashboard data={dashboard} onSelectCompany={(companyId) => { setSelectedCompanyId(companyId); setView('company'); }} />
-                : view === 'news' ? <NewsImpact candidates={newsCandidates} status={newsImpactStatus} onSelectTicker={(ticker) => {
-                    const company = companies.find((item) => item.securities.some((security) => security.ticker === ticker));
-                    if (company) { setSelectedCompanyId(company.company_id); setView('company'); }
-                  }} />
+                : view === 'news' ? <NewsImpact candidates={newsCandidates} status={newsImpactStatus} onSelectTicker={selectNewsTicker} />
                 : view === 'company' && detail ? <CompanyDetail data={detail} />
                   : view === 'chain' && graph ? <ChainMap data={graph} selectedEdge={selectedEdge} onSelectEdge={setSelectedEdge} />
                     : <ErrorState message="표시할 데이터가 없습니다." retry={() => setRefreshKey((value) => value + 1)} />}

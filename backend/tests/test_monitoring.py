@@ -419,6 +419,7 @@ def test_apply_master_lifecycle_snapshot_is_guarded_and_reversible(db):
         "markets_updated": 1,
         "companies_closed": 1,
         "remaining_safe_close_candidates": 0,
+        "remaining_market_updates": 0,
     }
     assert listed.market == "KOSPI"
     assert legacy.effective_to == date(2026, 10, 5)
@@ -429,6 +430,46 @@ def test_apply_master_lifecycle_snapshot_is_guarded_and_reversible(db):
         AuditLog.action == "apply_master_lifecycle",
     ).one()
     assert audit.after_state["securities_closed"] == 1
+
+
+def test_apply_master_lifecycle_snapshot_batches_market_updates(db):
+    companies = [Company(name="Listed One"), Company(name="Listed Two")]
+    db.add_all(companies)
+    db.flush()
+    securities = [
+        Security(
+            company_id=company.id,
+            market="UNKNOWN",
+            ticker=f"00000{index}",
+            security_type="COMMON",
+        )
+        for index, company in enumerate(companies, start=1)
+    ]
+    db.add_all(securities)
+    db.commit()
+    listings = [
+        {
+            "name": company.name,
+            "market": "KOSPI",
+            "ticker": security.ticker,
+            "listed_at": "2020-01-01",
+        }
+        for company, security in zip(companies, securities, strict=True)
+    ]
+    preview = compare_master_to_kind_snapshot(db, listings)
+
+    result = apply_master_lifecycle_snapshot(
+        db,
+        listings,
+        expected_sha256=preview["snapshot"]["sha256"],
+        expected_safe_close_candidates=0,
+        expected_confirmed_listed=2,
+        max_market_update=1,
+    )
+
+    assert result["applied"]["markets_updated"] == 1
+    assert result["applied"]["remaining_market_updates"] == 1
+    assert [security.market for security in securities] == ["KOSPI", "UNKNOWN"]
 
 
 def test_apply_master_lifecycle_snapshot_rejects_changed_preview(db):

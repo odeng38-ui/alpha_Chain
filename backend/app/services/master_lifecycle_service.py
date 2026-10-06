@@ -297,6 +297,7 @@ def apply_master_lifecycle_snapshot(
     expected_safe_close_candidates: int,
     expected_confirmed_listed: int,
     max_close: int = 100,
+    max_market_update: int = 100,
     as_of: date | None = None,
 ) -> dict[str, Any]:
     """Apply a previously previewed KIND snapshot with strict count/hash guards."""
@@ -326,13 +327,24 @@ def apply_master_lifecycle_snapshot(
         ).all()
     }
 
+    market_update_candidates = sum(
+        1
+        for security in active
+        if (
+            (listing := snapshot_by_ticker.get(security.ticker)) is not None
+            and security.market != listing["market"]
+        )
+    )
     market_updated = 0
     closed_ids: list[int] = []
     affected_company_ids: set[int] = set()
     for security in sorted(active, key=lambda item: item.id):
         listing = snapshot_by_ticker.get(security.ticker)
         if listing is not None:
-            if security.market != listing["market"]:
+            if (
+                security.market != listing["market"]
+                and market_updated < max_market_update
+            ):
                 security.market = listing["market"]
                 market_updated += 1
             continue
@@ -385,6 +397,9 @@ def apply_master_lifecycle_snapshot(
         after_state={
             "securities_closed": len(closed_ids),
             "markets_updated": market_updated,
+            "remaining_market_updates": (
+                market_update_candidates - market_updated
+            ),
             "companies_closed": companies_closed,
             "remaining_safe_close_candidates": (
                 expected_safe_close_candidates - len(closed_ids)
@@ -398,6 +413,9 @@ def apply_master_lifecycle_snapshot(
         "applied": {
             "securities_closed": len(closed_ids),
             "markets_updated": market_updated,
+            "remaining_market_updates": (
+                market_update_candidates - market_updated
+            ),
             "companies_closed": companies_closed,
             "remaining_safe_close_candidates": (
                 expected_safe_close_candidates - len(closed_ids)

@@ -59,6 +59,7 @@ class KindLifecycleApplyRequest(BaseModel):
     expected_confirmed_listed: int
     confirmation: str
     max_close: int = 100
+    max_market_update: int = 100
 
 
 @router.post("/master-lifecycle/krx-preview")
@@ -100,6 +101,7 @@ def master_lifecycle_krx_apply(
             expected_safe_close_candidates=request.expected_safe_close_candidates,
             expected_confirmed_listed=request.expected_confirmed_listed,
             max_close=max(1, min(request.max_close, 100)),
+            max_market_update=max(1, min(request.max_market_update, 100)),
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

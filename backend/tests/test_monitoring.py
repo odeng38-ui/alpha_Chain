@@ -418,6 +418,7 @@ def test_apply_master_lifecycle_snapshot_is_guarded_and_reversible(db):
         "securities_closed": 1,
         "markets_updated": 1,
         "companies_closed": 1,
+        "remaining_safe_close_candidates": 0,
     }
     assert listed.market == "KOSPI"
     assert legacy.effective_to == date(2026, 10, 5)

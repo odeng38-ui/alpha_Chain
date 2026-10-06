@@ -296,6 +296,7 @@ def apply_master_lifecycle_snapshot(
     expected_sha256: str,
     expected_safe_close_candidates: int,
     expected_confirmed_listed: int,
+    max_close: int = 100,
     as_of: date | None = None,
 ) -> dict[str, Any]:
     """Apply a previously previewed KIND snapshot with strict count/hash guards."""
@@ -328,7 +329,7 @@ def apply_master_lifecycle_snapshot(
     market_updated = 0
     closed_ids: list[int] = []
     affected_company_ids: set[int] = set()
-    for security in active:
+    for security in sorted(active, key=lambda item: item.id):
         listing = snapshot_by_ticker.get(security.ticker)
         if listing is not None:
             if security.market != listing["market"]:
@@ -343,6 +344,8 @@ def apply_master_lifecycle_snapshot(
             and "no price data found" in (checkpoint.last_error or "").lower()
         )
         if security.id in priced_ids or not no_price_failure:
+            continue
+        if len(closed_ids) >= max_close:
             continue
         security.effective_to = as_of
         security.delisted_at = security.delisted_at or as_of
@@ -364,9 +367,10 @@ def apply_master_lifecycle_snapshot(
                 company.status = "DELISTED"
                 companies_closed += 1
 
-    if len(closed_ids) != expected_safe_close_candidates:
+    expected_batch_size = min(expected_safe_close_candidates, max_close)
+    if len(closed_ids) != expected_batch_size:
         db.rollback()
-        raise ValueError("applied close count differs from confirmed preview")
+        raise ValueError("applied close batch differs from confirmed preview")
 
     db.add(AuditLog(
         actor="admin-api",
@@ -382,6 +386,9 @@ def apply_master_lifecycle_snapshot(
             "securities_closed": len(closed_ids),
             "markets_updated": market_updated,
             "companies_closed": companies_closed,
+            "remaining_safe_close_candidates": (
+                expected_safe_close_candidates - len(closed_ids)
+            ),
         },
         request_id=f"master-lifecycle-{snapshot['sha256'][:16]}",
     ))
@@ -392,6 +399,9 @@ def apply_master_lifecycle_snapshot(
             "securities_closed": len(closed_ids),
             "markets_updated": market_updated,
             "companies_closed": companies_closed,
+            "remaining_safe_close_candidates": (
+                expected_safe_close_candidates - len(closed_ids)
+            ),
         },
         "policy": {
             "mode": "applied",

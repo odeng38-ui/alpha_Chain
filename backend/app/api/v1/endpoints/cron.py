@@ -1,16 +1,19 @@
 import secrets
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.adapters.dart_adapter import DartAdapter, DartApiError
 from app.adapters.gdelt_news_adapter import GdeltNewsAdapter
 from app.adapters.google_news_adapter import FallbackNewsAdapter, GoogleNewsRssAdapter
 from app.adapters.us_market_adapter import YahooUSMarketAdapter
 from app.config import settings
 from app.db.session import get_db
-from app.models.schema import BacktestRun, GlobalEvent
+from app.models.schema import BacktestRun, Company, DartSyncState, GlobalEvent, Security
 from app.services.audit_service import record_audit
+from app.services.dart_service import DartCollectionService
 from app.services.event_impact_backtest_service import EventImpactBacktestService
 from app.services.event_impact_service import EventImpactV4Service
 from app.services.news_candidate_backtest_service import NewsCandidateBacktestService
@@ -52,6 +55,55 @@ def _record_cron_success(db: Session, job_name: str):
     db.commit()
 
 
+def run_due_dart_filings(db: Session, batch_size: int = 2):
+    """Sync one bounded batch of active companies needing a filing refresh."""
+    today = date.today()
+    companies = db.query(Company).join(
+        Security,
+        Security.company_id == Company.id,
+    ).outerjoin(
+        DartSyncState,
+        DartSyncState.company_id == Company.id,
+    ).filter(
+        Company.corp_code.isnot(None),
+        Company.status == "ACTIVE",
+        Security.security_type == "COMMON",
+        Security.effective_to.is_(None),
+        or_(
+            DartSyncState.company_id.is_(None),
+            DartSyncState.last_filing_date.is_(None),
+            DartSyncState.last_filing_date < today,
+        ),
+    ).distinct().order_by(Company.id).limit(batch_size).all()
+    service = DartCollectionService(
+        DartAdapter(settings.DART_API_KEY),
+        settings.DART_RAW_DIR,
+    )
+    results = []
+    for company in companies:
+        state = db.get(DartSyncState, company.id)
+        start = max(
+            today - timedelta(days=365),
+            state.last_filing_date + timedelta(days=1),
+        ) if state and state.last_filing_date else today - timedelta(days=365)
+        try:
+            result = service.sync_company(db, company, start, today, False)
+            results.append({"company_id": company.id, "status": "success", **result})
+        except (DartApiError, ValueError) as exc:
+            db.rollback()
+            state = db.get(DartSyncState, company.id) or DartSyncState(
+                company_id=company.id,
+            )
+            db.add(state)
+            state.status = "FAILED"
+            state.last_error = str(exc)
+            db.commit()
+            results.append({
+                "company_id": company.id,
+                "status": "failed",
+                "error": str(exc),
+            })
+    return {"companies": len(companies), "results": results}
 def run_us_market_pipeline(db: Session):
     sync = USMarketEventService(YahooUSMarketAdapter()).sync(db, lookback_days=180)
     generated = []
@@ -140,6 +192,10 @@ def collect_due_prices(
         batch_size=max(1, min(settings.CRON_BATCH_SIZE, 100)),
     )
     result["news_backtest"] = run_daily_news_backtest(db)
+    result["dart"] = run_due_dart_filings(
+        db,
+        batch_size=max(1, min(settings.DART_CRON_BATCH_SIZE, 5)),
+    )
     _record_cron_success(db, "prices")
     return result
 

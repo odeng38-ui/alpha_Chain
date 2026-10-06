@@ -27,8 +27,10 @@ def test_cron_rejects_invalid_bearer_token(monkeypatch):
 def test_cron_runs_bounded_batch_with_valid_token(monkeypatch):
     expected = {"processed": 1, "has_more": False}
     backtest = {"run_id": 12, "status": "INSUFFICIENT_SAMPLE", "created": True}
+    dart = {"companies": 2, "results": []}
     monkeypatch.setattr(cron.settings, "CRON_SECRET", "expected")
     monkeypatch.setattr(cron.settings, "CRON_BATCH_SIZE", 250)
+    monkeypatch.setattr(cron.settings, "DART_CRON_BATCH_SIZE", 9)
     monkeypatch.setattr(cron, "_record_cron_success", lambda db, job_name: None)
     monkeypatch.setattr(
         cron,
@@ -40,10 +42,15 @@ def test_cron_runs_bounded_batch_with_valid_token(monkeypatch):
         "run_daily_news_backtest",
         lambda db: backtest if db == "db" else None,
     )
+    monkeypatch.setattr(
+        cron,
+        "run_due_dart_filings",
+        lambda db, batch_size: dart if db == "db" and batch_size == 5 else None,
+    )
 
     result = cron.collect_due_prices(authorization="Bearer expected", db="db")
 
-    assert result == {**expected, "news_backtest": backtest}
+    assert result == {**expected, "news_backtest": backtest, "dart": dart}
 
 def test_news_cron_runs_pipeline_with_valid_token(monkeypatch):
     expected = {"validation": {"status": "PASSED"}}

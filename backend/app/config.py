@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "")
     CRON_SECRET: str = os.getenv("CRON_SECRET", "")
     CRON_BATCH_SIZE: int = int(os.getenv("CRON_BATCH_SIZE", "100"))
+    DART_CRON_BATCH_SIZE: int = int(os.getenv("DART_CRON_BATCH_SIZE", "2"))
     PRICE_INITIAL_LOOKBACK_DAYS: int = int(os.getenv("PRICE_INITIAL_LOOKBACK_DAYS", "30"))
     PRICE_FAILURE_RETRY_DAYS: int = int(os.getenv("PRICE_FAILURE_RETRY_DAYS", "7"))
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000")

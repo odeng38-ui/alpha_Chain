@@ -234,6 +234,37 @@ def test_price_recovery_distinguishes_retryable_and_action_required(db):
     }
 
 
+def test_operational_alerts_ignore_closed_security_price_failures(db):
+    company = Company(name="Closed Corp")
+    db.add(company)
+    db.flush()
+    security = Security(
+        company_id=company.id,
+        market="KOSPI",
+        ticker="000099",
+        effective_to=date(2026, 10, 5),
+    )
+    db.add(security)
+    db.flush()
+    db.add(CollectionCheckpoint(
+        job_name="daily_price",
+        security_id=security.id,
+        status="FAILED",
+        last_error="No price data found for ticker=000099",
+    ))
+    db.commit()
+
+    result = build_operational_alerts(
+        db,
+        now=datetime(2026, 10, 6, tzinfo=timezone.utc),
+    )
+
+    assert result["summary"]["failed_jobs"] == 0
+    assert result["summary"]["action_required_failures"] == 0
+    assert result["price_recovery"]["total_checkpoints"] == 0
+    assert result["price_recovery"]["status"] == "healthy"
+
+
 def test_master_lifecycle_report_is_read_only_and_classifies_candidates(db):
     companies = [
         Company(name="Priced Corp"),

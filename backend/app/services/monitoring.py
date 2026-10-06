@@ -16,6 +16,7 @@ from app.models.schema import (
     DartSyncState,
     Filing,
     MacroObservation,
+    Security,
 )
 from app.services.event_impact_service import EventImpactV4Service
 
@@ -51,8 +52,12 @@ def _price_recovery_status(
     now: datetime,
     priced_security_ids: set[int],
 ) -> dict:
-    rows = db.query(CollectionCheckpoint).filter(
+    rows = db.query(CollectionCheckpoint).join(
+        Security,
+        Security.id == CollectionCheckpoint.security_id,
+    ).filter(
         CollectionCheckpoint.job_name == "daily_price",
+        Security.effective_to.is_(None),
     ).all()
     retry_before = now.replace(tzinfo=None) - timedelta(days=settings.PRICE_FAILURE_RETRY_DAYS)
     healthy = 0
@@ -93,12 +98,22 @@ def _price_recovery_status(
 def build_operational_alerts(db: Session, now: datetime | None = None) -> dict:
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     failures = []
+    active_security_ids = {
+        row[0] for row in db.query(Security.id).filter(
+            Security.effective_to.is_(None),
+        ).all()
+    }
     priced_security_ids = {
         row[0] for row in db.query(DailyPrice.security_id).distinct().all()
     }
     for row in db.query(CollectionCheckpoint).filter(
         func.upper(CollectionCheckpoint.status).in_(FAILURE_STATUSES)
     ).all():
+        if (
+            row.job_name == "daily_price"
+            and row.security_id not in active_security_ids
+        ):
+            continue
         failures.append({
             "source": "collection_checkpoint",
             "job_name": row.job_name,
@@ -115,6 +130,7 @@ def build_operational_alerts(db: Session, now: datetime | None = None) -> dict:
     for row in db.query(DartSyncState).filter(
         func.upper(DartSyncState.status).in_(FAILURE_STATUSES)
     ).all():
+
         failures.append({
             "source": "dart_sync_state",
             "job_name": "dart_sync",

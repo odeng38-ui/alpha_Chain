@@ -10,7 +10,7 @@ from app.adapters.dart_adapter import DartAdapter, DartApiError
 from app.config import settings
 from app.db.session import get_db
 from app.jobs import dart_collection_runner
-from app.models.schema import Company, DartSyncState, Filing
+from app.models.schema import Company, DartSyncState, Filing, Security
 from app.security import require_admin
 from app.services.dart_service import DartCollectionService
 from app.services.industry_service import sync_industry_batch
@@ -20,6 +20,7 @@ router = APIRouter(prefix="/dart", tags=["DART"])
 
 class DartSyncRequest(BaseModel):
     company_ids: Optional[list[int]] = None
+    after_id: int = Field(default=0, ge=0)
     start_date: date = Field(default_factory=lambda: date.today() - timedelta(days=30))
     end_date: date = Field(default_factory=date.today)
     limit: int = Field(default=100, ge=1, le=500)
@@ -35,10 +36,20 @@ class DartBackgroundRequest(BaseModel):
     retry_failed: bool = False
 @router.post("/sync", dependencies=[Depends(require_admin)])
 def sync_dart(req: DartSyncRequest, db: Session = Depends(get_db)):
-    query = db.query(Company).filter(Company.corp_code.isnot(None))
+    query = db.query(Company).join(
+        Security,
+        Security.company_id == Company.id,
+    ).filter(
+        Company.corp_code.isnot(None),
+        Company.status == "ACTIVE",
+        Company.id > req.after_id,
+        Security.security_type == "COMMON",
+        Security.effective_to.is_(None),
+    ).distinct()
     if req.company_ids:
         query = query.filter(Company.id.in_(req.company_ids))
-    companies = query.order_by(Company.id).limit(req.limit).all()
+    candidates = query.order_by(Company.id).limit(req.limit + 1).all()
+    companies = candidates[:req.limit]
     service = DartCollectionService(DartAdapter(settings.DART_API_KEY), settings.DART_RAW_DIR)
     results = []
     for company in companies:
@@ -58,7 +69,12 @@ def sync_dart(req: DartSyncRequest, db: Session = Depends(get_db)):
             state.last_error = str(exc)
             db.commit()
             results.append({"company_id": company.id, "status": "failed", "error": str(exc)})
-    return {"companies": len(companies), "results": results}
+    return {
+        "companies": len(companies),
+        "results": results,
+        "next_after_id": companies[-1].id if companies else None,
+        "has_more": len(candidates) > req.limit,
+    }
 
 
 @router.post("/collection-run/start", dependencies=[Depends(require_admin)])

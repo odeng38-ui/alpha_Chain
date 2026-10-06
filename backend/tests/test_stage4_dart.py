@@ -5,8 +5,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.v1.endpoints import dart as dart_endpoint
 from app.db.session import Base
-from app.models.schema import Company, DisclosureEvent, Filing, FinancialFact
+from app.models.schema import Company, DisclosureEvent, Filing, FinancialFact, Security
 from app.services.dart_service import DartCollectionService, classify_event
 
 engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -81,4 +82,50 @@ def test_financial_cfs_ofs_are_preserved():
     assert {row.fs_div for row in rows} == {"CFS", "OFS"}
     assert all(row.value == 1234567 for row in rows)
     assert service.sync_financials(db, company, "2025", "11011") == 0
+    db.close()
+
+
+def test_sync_dart_uses_active_company_cursor(monkeypatch):
+    db = Session()
+    companies = [
+        Company(corp_code=f"0000000{index}", name=f"Company {index}")
+        for index in range(1, 4)
+    ]
+    db.add_all(companies)
+    db.flush()
+    db.add_all([
+        Security(company_id=companies[0].id, ticker="000001", market="KOSPI"),
+        Security(
+            company_id=companies[1].id,
+            ticker="000002",
+            market="KOSPI",
+            effective_to=date(2025, 1, 1),
+        ),
+        Security(company_id=companies[2].id, ticker="000003", market="KOSPI"),
+    ])
+    db.commit()
+
+    class FakeService:
+        def __init__(self, adapter, raw_dir):
+            pass
+
+        def sync_company(self, db, company, start, end, download_documents):
+            return {"filings": company.id, "corrections": 0, "events": 0}
+
+    monkeypatch.setattr(dart_endpoint, "DartAdapter", lambda key: object())
+    monkeypatch.setattr(dart_endpoint, "DartCollectionService", FakeService)
+    result = dart_endpoint.sync_dart(
+        dart_endpoint.DartSyncRequest(
+            after_id=companies[0].id,
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 1, 2),
+            limit=1,
+        ),
+        db,
+    )
+
+    assert result["companies"] == 1
+    assert result["results"][0]["company_id"] == companies[2].id
+    assert result["next_after_id"] == companies[2].id
+    assert result["has_more"] is False
     db.close()

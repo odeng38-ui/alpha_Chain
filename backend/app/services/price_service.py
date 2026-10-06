@@ -15,11 +15,12 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session
 
-from app.adapters.base import AdapterError, BrokerAdapter, DataNotFoundError
+from app.adapters.base import AdapterError, BrokerAdapter, DataNotFoundError, OHLCVRecord
 from app.adapters.pykrx_adapter import PykrxAdapter
 from app.adapters.yahoo_adapter import YahooFinanceAdapter
 from app.config import settings
 from app.models.schema import (
+    AuditLog,
     CollectionCheckpoint,
     DailyPrice,
     NewsArticle,
@@ -39,7 +40,6 @@ def get_default_adapter() -> BrokerAdapter:
     if _default_adapter is None:
         _default_adapter = YahooFinanceAdapter() if os.getenv("VERCEL") else PykrxAdapter()
     return _default_adapter
-
 
 # ------------------------------------------------------------------ #
 # 내부 헬퍼                                                             #
@@ -103,6 +103,64 @@ def _save_checkpoint(db: Session, security_id: int, status: str,
     if last_success_date is not None:
         checkpoint.last_success_date = last_success_date
 
+
+def import_price_records(
+    db: Session,
+    *,
+    security_id: int,
+    ticker: str,
+    records: List[OHLCVRecord],
+    source: str = "KRX_PYKRX",
+) -> Dict[str, Any]:
+    """Import a bounded, pre-fetched price batch with strict identity guards."""
+    security = db.query(Security).filter(Security.id == security_id).first()
+    if security is None:
+        raise ValueError("security not found")
+    if security.effective_to is not None:
+        raise ValueError("security is not active")
+    if security.ticker != ticker:
+        raise ValueError("ticker does not match security")
+    if not records:
+        raise ValueError("at least one price record is required")
+    if len(records) > 5000:
+        raise ValueError("price import is limited to 5000 records")
+    dates = [record.trade_date for record in records]
+    if len(dates) != len(set(dates)):
+        raise ValueError("duplicate trade dates are not allowed")
+    if any(record.ticker != ticker for record in records):
+        raise ValueError("record ticker does not match request ticker")
+    if any(record.trade_date > date.today() for record in records):
+        raise ValueError("future trade dates are not allowed")
+    if any(record.close is None or record.close <= 0 for record in records):
+        raise ValueError("every record must have a positive close")
+
+    inserted, skipped = _store_price_records(db, security_id, records)
+    last_trade_date = max(dates)
+    _save_checkpoint(db, security_id, "SUCCESS", last_trade_date)
+    db.add(AuditLog(
+        actor="admin-api",
+        action="import_prices",
+        resource_type="security",
+        resource_id=str(security_id),
+        before_state={"ticker": ticker, "source": source},
+        after_state={
+            "inserted": inserted,
+            "skipped": skipped,
+            "first_trade_date": str(min(dates)),
+            "last_trade_date": str(last_trade_date),
+        },
+        request_id=f"price-import-{security_id}-{last_trade_date}",
+    ))
+    db.commit()
+    return {
+        "security_id": security_id,
+        "ticker": ticker,
+        "source": source,
+        "inserted": inserted,
+        "skipped": skipped,
+        "first_trade_date": str(min(dates)),
+        "last_trade_date": str(last_trade_date),
+    }
 
 # ------------------------------------------------------------------ #
 # 백필 (Backfill)                                                       #
@@ -226,7 +284,6 @@ def backfill_batch(
                 "error": str(exc),
             })
     return results
-
 
 # ------------------------------------------------------------------ #
 # 증분 수집 (Incremental Update)                                        #

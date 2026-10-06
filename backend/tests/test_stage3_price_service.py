@@ -466,3 +466,62 @@ def test_due_batch_prioritizes_recent_directional_news_candidate(db):
     assert result["security_ids"] == [priority.id]
     assert result["priority_candidates"] == 1
     assert result["priority_processed"] == 1
+
+
+def test_import_price_records_is_guarded_and_updates_checkpoint(db):
+    company = Company(name="Import Corp")
+    db.add(company)
+    db.flush()
+    security = Security(
+        company_id=company.id,
+        market="KOSDAQ",
+        ticker="043220",
+        security_type="COMMON",
+    )
+    db.add(security)
+    db.commit()
+    records = [
+        make_ohlcv("043220", date(2024, 1, 2)),
+        make_ohlcv("043220", date(2024, 1, 3)),
+    ]
+
+    result = price_service.import_price_records(
+        db,
+        security_id=security.id,
+        ticker="043220",
+        records=records,
+    )
+
+    assert result["inserted"] == 2
+    assert result["skipped"] == 0
+    assert db.query(DailyPrice).filter_by(security_id=security.id).count() == 2
+    checkpoint = db.query(CollectionCheckpoint).filter_by(
+        job_name="daily_price",
+        security_id=security.id,
+    ).one()
+    assert checkpoint.status == "SUCCESS"
+    assert checkpoint.last_success_date == date(2024, 1, 3)
+
+
+def test_import_price_records_rejects_ticker_mismatch(db):
+    company = Company(name="Import Corp")
+    db.add(company)
+    db.flush()
+    security = Security(
+        company_id=company.id,
+        market="KOSDAQ",
+        ticker="043220",
+        security_type="COMMON",
+    )
+    db.add(security)
+    db.commit()
+
+    with pytest.raises(ValueError, match="ticker does not match security"):
+        price_service.import_price_records(
+            db,
+            security_id=security.id,
+            ticker="999999",
+            records=[make_ohlcv("999999", date(2024, 1, 2))],
+        )
+
+    assert db.query(DailyPrice).count() == 0

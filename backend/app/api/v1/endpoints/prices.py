@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.adapters.base import OHLCVRecord
 from app.db.session import get_db
 from app.jobs import price_collection_runner
 from app.models.schema import CollectionCheckpoint, DailyPrice, Security
@@ -42,6 +43,24 @@ class IncrementalRequest(BaseModel):
     batch_size: int = Field(default=20, ge=1, le=100)
     failed_only: bool = False
 
+
+class PriceImportItem(BaseModel):
+    trade_date: date
+    open: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    close: float
+    volume: Optional[int] = None
+    value: Optional[float] = None
+    adjusted_close: Optional[float] = None
+    raw_hash: Optional[str] = None
+
+
+class PriceImportRequest(BaseModel):
+    security_id: int
+    ticker: str
+    source: str = "KRX_PYKRX"
+    records: List[PriceImportItem]
 # ------------------------------------------------------------------ #
 # 엔드포인트                                                             #
 # ------------------------------------------------------------------ #
@@ -226,6 +245,22 @@ def trigger_backfill(
     )
     return {"status": "completed", "results": results}
 
+
+@router.post("/import", summary="Import verified external prices", dependencies=[Depends(require_admin)])
+def import_prices(req: PriceImportRequest, db: Session = Depends(get_db)):
+    try:
+        return price_service.import_price_records(
+            db,
+            security_id=req.security_id,
+            ticker=req.ticker,
+            source=req.source,
+            records=[
+                OHLCVRecord(ticker=req.ticker, **item.model_dump())
+                for item in req.records
+            ],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 @router.post("/incremental", summary="증분 수집 트리거", dependencies=[Depends(require_admin)])
 def trigger_incremental(

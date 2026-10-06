@@ -121,6 +121,41 @@ def test_google_news_enforces_requested_publication_window(monkeypatch):
     assert [row.title for row in rows] == ["Fresh market news - Reuters"]
 
 
+def test_google_news_combines_topic_queries_and_deduplicates(monkeypatch):
+    from app.adapters.google_news_adapter import GoogleNewsRssAdapter
+
+    calls = []
+
+    class Response:
+        def __init__(self, content):
+            self.content = content
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+    def fake_get(*args, **kwargs):
+        query = kwargs["params"]["q"]
+        calls.append(query)
+        suffix = "shared" if len(calls) < 4 else "energy"
+        hour = 10 if suffix == "shared" else 11
+        return Response(f"""<?xml version="1.0" encoding="UTF-8"?>
+        <rss><channel><item><title>{suffix} - Reuters</title>
+        <link>https://example.com/{suffix}</link>
+        <pubDate>Fri, 02 Oct 2026 {hour}:00:00 GMT</pubDate>
+        <source url="https://reuters.com">Reuters</source><guid>{suffix}</guid>
+        </item></channel></rss>""".encode())
+
+    monkeypatch.setattr("app.adapters.google_news_adapter.httpx.get", fake_get)
+    adapter = GoogleNewsRssAdapter(now=datetime(2026, 10, 2, 12, tzinfo=timezone.utc))
+    rows = adapter.fetch(timespan="24h", max_records=10)
+
+    assert len(calls) == 4
+    assert [row.url for row in rows] == [
+        "https://example.com/energy", "https://example.com/shared",
+    ]
+    assert all(row.raw_metadata["search_query"] for row in rows)
+
 def test_prune_stale_supports_dry_run_and_precise_cutoff():
     db = Session()
     db.add_all([

@@ -137,7 +137,7 @@ def test_google_news_combines_topic_queries_and_deduplicates(monkeypatch):
     def fake_get(*args, **kwargs):
         query = kwargs["params"]["q"]
         calls.append(query)
-        suffix = "shared" if len(calls) < 4 else "energy"
+        suffix = "energy" if "oil OR OPEC" in query else "shared"
         hour = 10 if suffix == "shared" else 11
         return Response(f"""<?xml version="1.0" encoding="UTF-8"?>
         <rss><channel><item><title>{suffix} - Reuters</title>

@@ -1,5 +1,6 @@
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
@@ -62,11 +63,7 @@ class GoogleNewsRssAdapter:
                 item.replace("when:1d", f"when:{timespan}") for item in search_queries
             ]
 
-        records = []
-        seen_urls = set()
-        request_errors = []
-        cutoff = self.now - self._timespan_delta(timespan)
-        for search_query in search_queries:
+        def fetch_root(search_query):
             try:
                 response = httpx.get(
                     self.base_url,
@@ -75,9 +72,20 @@ class GoogleNewsRssAdapter:
                     timeout=self.timeout,
                 )
                 response.raise_for_status()
-                root = ElementTree.fromstring(response.content)
+                return search_query, ElementTree.fromstring(response.content), None
             except (httpx.HTTPError, ElementTree.ParseError) as exc:
-                request_errors.append(exc)
+                return search_query, None, exc
+
+        with ThreadPoolExecutor(max_workers=len(search_queries)) as executor:
+            responses = list(executor.map(fetch_root, search_queries))
+
+        records = []
+        seen_urls = set()
+        request_errors = []
+        cutoff = self.now - self._timespan_delta(timespan)
+        for search_query, root, error in responses:
+            if error is not None:
+                request_errors.append(error)
                 continue
 
             for item in root.findall("./channel/item"):

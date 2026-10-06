@@ -150,3 +150,28 @@ def test_weekly_event_backtest_reuses_same_iso_week_run():
     result = cron.run_weekly_event_impact_backtest(Db())
 
     assert result == {"run_id": 15, "status": "PARTIAL_ACCEPTANCE", "created": False}
+
+
+def test_weekly_macro_sync_reuses_same_iso_week_run():
+    existing = SimpleNamespace(id=20)
+
+    class Query:
+        def filter(self, *args):
+            return self
+
+        def order_by(self, *args):
+            return self
+
+        def first(self):
+            return existing
+
+    class Db:
+        def query(self, *args):
+            return Query()
+
+    result = cron.run_weekly_macro_sync(Db())
+
+    assert result == {
+        "status": "SKIPPED",
+        "reason": "ALREADY_COMPLETED_THIS_WEEK",
+    }

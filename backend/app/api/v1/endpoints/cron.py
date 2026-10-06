@@ -6,16 +6,18 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.adapters.dart_adapter import DartAdapter, DartApiError
+from app.adapters.fred_adapter import FredAdapter, FredApiError
 from app.adapters.gdelt_news_adapter import GdeltNewsAdapter
 from app.adapters.google_news_adapter import FallbackNewsAdapter, GoogleNewsRssAdapter
 from app.adapters.us_market_adapter import YahooUSMarketAdapter
 from app.config import settings
 from app.db.session import get_db
-from app.models.schema import BacktestRun, Company, DartSyncState, GlobalEvent, Security
+from app.models.schema import AuditLog, BacktestRun, Company, DartSyncState, GlobalEvent, Security
 from app.services.audit_service import record_audit
 from app.services.dart_service import DartCollectionService
 from app.services.event_impact_backtest_service import EventImpactBacktestService
 from app.services.event_impact_service import EventImpactV4Service
+from app.services.fred_service import FredCollectionService
 from app.services.news_candidate_backtest_service import NewsCandidateBacktestService
 from app.services.news_candidate_validation_service import NewsCandidateValidationService
 from app.services.news_classification_service import NewsClassificationService
@@ -104,6 +106,41 @@ def run_due_dart_filings(db: Session, batch_size: int = 2):
                 "error": str(exc),
             })
     return {"companies": len(companies), "results": results}
+def run_weekly_macro_sync(db: Session):
+    """Refresh recent FRED vintages once per ISO week without blocking news."""
+    iso_year, iso_week, _ = date.today().isocalendar()
+    resource_id = f"macro-weekly-{iso_year}-W{iso_week:02d}"
+    existing = db.query(AuditLog).filter(
+        AuditLog.actor == "vercel-cron",
+        AuditLog.action == "completed",
+        AuditLog.resource_type == "cron_run",
+        AuditLog.resource_id == resource_id,
+    ).order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).first()
+    if existing is not None:
+        return {"status": "SKIPPED", "reason": "ALREADY_COMPLETED_THIS_WEEK"}
+    if not settings.FRED_API_KEY:
+        return {"status": "SKIPPED", "reason": "FRED_API_KEY_NOT_CONFIGURED"}
+    try:
+        result = FredCollectionService(
+            FredAdapter(settings.FRED_API_KEY),
+        ).sync(
+            db,
+            observation_start=date.today() - timedelta(days=730),
+        )
+    except (FredApiError, ValueError) as exc:
+        db.rollback()
+        return {"status": "FAILED", "error": str(exc)}
+    record_audit(
+        db,
+        actor="vercel-cron",
+        action="completed",
+        resource_type="cron_run",
+        resource_id=resource_id,
+        before_state=None,
+        after_state={"status": "SUCCESS", **result},
+    )
+    db.commit()
+    return {"status": "SUCCESS", **result}
 def run_us_market_pipeline(db: Session):
     sync = USMarketEventService(YahooUSMarketAdapter()).sync(db, lookback_days=180)
     generated = []
@@ -151,6 +188,7 @@ def run_news_pipeline(db: Session):
     validation = NewsCandidateValidationService().validate(db)
     us_market = run_us_market_pipeline(db)
     impact_backtest = run_weekly_event_impact_backtest(db)
+    macro = run_weekly_macro_sync(db)
     return {
         "collection": collection,
         "classification": classification,
@@ -158,6 +196,7 @@ def run_news_pipeline(db: Session):
         "validation": validation,
         "us_market": us_market,
         "impact_backtest": impact_backtest,
+        "macro": macro,
     }
 
 

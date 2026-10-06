@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -87,3 +87,22 @@ def test_macro_sync_reports_missing_api_key(monkeypatch):
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == "FRED_API_KEY is not configured"
+
+def test_fred_vintage_chunks_stop_before_provider_today():
+    adapter = FredAdapter("test-key")
+    calls = []
+
+    def fake_get(path, **params):
+        calls.append(params)
+        return {"observations": []}
+
+    adapter._get = fake_get
+    adapter.observations(
+        "DGS10",
+        output_type=3,
+        observation_start=date.today() - timedelta(days=2),
+        chunk_vintages=True,
+    )
+
+    assert len(calls) == 1
+    assert date.fromisoformat(calls[0]["realtime_end"]) <= date.today() - timedelta(days=1)

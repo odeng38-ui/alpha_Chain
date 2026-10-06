@@ -51,7 +51,7 @@ class FredAdapter:
                      observation_start: date, chunk_vintages: bool = False) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         realtime_start = observation_start
-        today = date.today()
+        today = date.today() - timedelta(days=1)
         while realtime_start <= today:
             realtime_end = min(
                 realtime_start + timedelta(days=1500), today

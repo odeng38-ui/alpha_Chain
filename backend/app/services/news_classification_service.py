@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -20,11 +21,11 @@ EVENT_RULES = (
     ("FED_POLICY", ("federal reserve", "fed ", "fed's", "fed chief", "fed outlook", "interest rate", "rate hike", "rate cut", "bond yield")),
     ("INFLATION", ("inflation", "cpi", "consumer price", "pce")),
     ("TRADE_POLICY", ("tariff", "trade war", "export control", "sanction")),
-    ("SEMICONDUCTOR", ("semiconductor", "chip", "nvidia", "phlx semiconductor")),
+    ("SEMICONDUCTOR", ("semiconductor", "chip", "chips", "nvidia", "phlx semiconductor")),
     ("AI_TECH", ("artificial intelligence", " ai ", "technology", "tech ")),
     ("ENERGY", ("crude oil", "oil ", "opec", "natural gas")),
-    ("CORPORATE_EARNINGS", ("earnings", "profit", "revenue", "outlook")),
-    ("MARKET_MOVEMENT", ("stock", "market", "s&p", "nasdaq", "dow", "wall street", "bond")),
+    ("CORPORATE_EARNINGS", ("earnings", "profit", "profits", "revenue", "outlook")),
+    ("MARKET_MOVEMENT", ("stock", "stocks", "market", "markets", "s&p", "nasdaq", "dow", "wall street", "bond", "bonds")),
 )
 
 INDUSTRY_RULES = {
@@ -53,11 +54,18 @@ class NewsClassificationService:
     version = "news-rules-v1"
 
     @staticmethod
+    def _find_terms(text: str, terms) -> list[str]:
+        return [
+            term.strip() for term in terms
+            if re.search(rf"(?<![a-z0-9]){re.escape(term.strip())}(?![a-z0-9])", text)
+        ]
+
+    @staticmethod
     def classify_text(title: str) -> ClassificationResult:
         normalized = f" {title.lower()} "
         matched_by_kind = {}
         for event_kind, terms in EVENT_RULES:
-            matches = [term.strip() for term in terms if term in normalized]
+            matches = NewsClassificationService._find_terms(normalized, terms)
             if matches:
                 matched_by_kind[event_kind] = matches
         event_kind = next(iter(matched_by_kind), "OTHER")
@@ -66,8 +74,9 @@ class NewsClassificationService:
             for industry in INDUSTRY_RULES[kind]:
                 if industry not in industries:
                     industries.append(industry)
-        positive = [term for term in POSITIVE_TERMS if term in normalized]
-        negative = [term for term in NEGATIVE_TERMS if term in normalized]
+        direction_text = re.sub(r"\bcapital gains?\b", "", normalized)
+        positive = NewsClassificationService._find_terms(direction_text, POSITIVE_TERMS)
+        negative = NewsClassificationService._find_terms(direction_text, NEGATIVE_TERMS)
         if positive and negative:
             direction = "MIXED"
         elif positive:

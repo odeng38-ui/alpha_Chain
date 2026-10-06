@@ -49,6 +49,21 @@ def test_classifies_mixed_semiconductor_energy_market_news():
     assert "ENERGY_CHEMICALS" in result.industries
 
 
+def test_classification_uses_word_boundaries_and_ignores_capital_gains_context():
+    result = NewsClassificationService.classify_text(
+        "Treasury and IRS crack down on ETF strategy used to avoid capital gains taxes"
+    )
+    assert result.event_kind == "OTHER"
+    assert result.direction == "NEUTRAL"
+    assert "dow" not in result.matched_keywords
+    assert "gains" not in result.matched_keywords
+
+
+def test_classification_keeps_explicit_market_plural_terms():
+    result = NewsClassificationService.classify_text("Dow gains as stocks rise")
+    assert result.event_kind == "MARKET_MOVEMENT"
+    assert result.direction == "POSITIVE"
+
 def test_unknown_news_requires_review_and_sync_is_idempotent():
     db = Session()
     db.add(article("Local community holds annual festival"))

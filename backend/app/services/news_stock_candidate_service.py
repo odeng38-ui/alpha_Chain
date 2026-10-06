@@ -58,6 +58,11 @@ class NewsStockCandidateService:
         for classification, article in rows:
             industries = list(classification.industries or [])
             if not industries:
+                if regenerate:
+                    deleted += db.query(NewsStockCandidate).filter(
+                        NewsStockCandidate.classification_id == classification.id,
+                        NewsStockCandidate.version == self.version,
+                    ).delete(synchronize_session=False)
                 continue
             securities = db.query(Security).join(Company).filter(
                 Security.security_type == "COMMON",

@@ -125,6 +125,23 @@ def test_regenerate_updates_without_duplicate_candidates():
     assert db.query(NewsStockCandidate).count() == 1
     db.close()
 
+def test_regenerate_removes_stale_candidates_when_classification_loses_industries():
+    db = Session()
+    add_security(db, "Chip", "000004", "SEMICONDUCTORS_ELECTRONICS", 1000)
+    article, classification = add_classification(db)
+    db.commit()
+    service = NewsStockCandidateService()
+    service.generate(db, article_id=article.id)
+
+    classification.industries = []
+    classification.event_kind = "OTHER"
+    db.commit()
+    result = service.generate(db, article_id=article.id, regenerate=True)
+
+    assert result["deleted"] == 1
+    assert db.query(NewsStockCandidate).count() == 0
+    db.close()
+
 def test_balanced_selection_prevents_primary_industry_monopoly():
     db = Session()
     for index in range(10):

@@ -1,9 +1,9 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.adapters.fred_adapter import FredAdapter
+from app.adapters.fred_adapter import FredAdapter, FredApiError
 from app.config import settings
 from app.db.session import get_db
 from app.models.schema import MacroObservation, MacroSeries
@@ -15,8 +15,13 @@ router = APIRouter(prefix="/macro", tags=["Macro"])
 
 @router.post("/sync", dependencies=[Depends(require_admin)])
 def sync_macro(db: Session = Depends(get_db)):
-    service = FredCollectionService(FredAdapter(settings.FRED_API_KEY))
-    return service.sync(db)
+    if not settings.FRED_API_KEY:
+        raise HTTPException(status_code=503, detail="FRED_API_KEY is not configured")
+    try:
+        service = FredCollectionService(FredAdapter(settings.FRED_API_KEY))
+        return service.sync(db)
+    except FredApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/series")

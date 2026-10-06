@@ -1,11 +1,13 @@
 from datetime import date
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.adapters.fred_adapter import FredAdapter
+from app.api.v1.endpoints import macro as macro_endpoint
 from app.db.session import Base
 from app.models.schema import MacroObservation, MacroSeries
 from app.services.fred_service import FredCollectionService
@@ -75,3 +77,13 @@ def test_wide_revision_rows_keep_only_value_changes():
         {"date": "2025-01-01", "realtime_start": "2025-02-01", "value": "100.0"},
         {"date": "2025-01-01", "realtime_start": "2025-04-01", "value": "100.2"},
     ]
+
+
+def test_macro_sync_reports_missing_api_key(monkeypatch):
+    monkeypatch.setattr(macro_endpoint.settings, "FRED_API_KEY", "")
+
+    with pytest.raises(HTTPException) as exc_info:
+        macro_endpoint.sync_macro(db=None)
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "FRED_API_KEY is not configured"

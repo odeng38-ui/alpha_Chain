@@ -1,7 +1,7 @@
 from datetime import date
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.models.schema import AlphaWeightConfig, FeatureSnapshot, ScoreSnapshot
 from app.security import require_admin
 from app.services.alpha_score_service import AlphaScoreService
+from app.services.score_batch_verification import verify_score_batch
 
 router = APIRouter(prefix="/scores", tags=["Alpha Score"])
 service = AlphaScoreService()
@@ -50,6 +51,30 @@ def serialize_score(row: ScoreSnapshot, features):
 @router.post("/batch", dependencies=[Depends(require_admin)])
 def calculate_batch(req: ScoreBatchRequest, db: Session = Depends(get_db)):
     return service.batch(db, req.as_of_date, req.security_ids, req.horizon, req.version)
+
+
+@router.get("/batch/verification", dependencies=[Depends(require_admin)])
+def verify_batch(
+    as_of_date: date,
+    horizon: str = Query(default="20d", min_length=1, max_length=20),
+    version: str = Query(default="v1.0", min_length=1, max_length=20),
+    target_policy: Literal["active_common", "all_common"] = "active_common",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    result = verify_score_batch(
+        db,
+        as_of_date=as_of_date,
+        horizon=horizon,
+        version=version,
+        target_policy=target_policy,
+        missing_offset=(page - 1) * page_size,
+        missing_limit=page_size,
+    ).to_dict()
+    result["missing_page"] = page
+    result["missing_page_size"] = page_size
+    return result
 
 
 @router.post("/security/{security_id}/calculate", dependencies=[Depends(require_admin)])

@@ -20,6 +20,7 @@ class ScoreBatchRequest(BaseModel):
     security_ids: Optional[List[int]] = None
     horizon: str = "20d"
     version: str = "v1.0"
+    skip_existing: bool = False
 
 
 class WeightConfigRequest(BaseModel):
@@ -50,7 +51,14 @@ def serialize_score(row: ScoreSnapshot, features):
 
 @router.post("/batch", dependencies=[Depends(require_admin)])
 def calculate_batch(req: ScoreBatchRequest, db: Session = Depends(get_db)):
-    return service.batch(db, req.as_of_date, req.security_ids, req.horizon, req.version)
+    return service.batch(
+        db,
+        req.as_of_date,
+        req.security_ids,
+        req.horizon,
+        req.version,
+        skip_existing=req.skip_existing,
+    )
 
 
 @router.get("/batch/verification", dependencies=[Depends(require_admin)])

@@ -1,9 +1,11 @@
 import hashlib
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -157,6 +159,98 @@ def test_weight_changes_are_versioned_and_normalized():
     assert row.changed_by == "admin"
     with pytest.raises(ValueError):
         AlphaScoreService.save_weights(db, "v1.1", weights, "admin", "duplicate")
+
+
+def test_skip_existing_batch_does_not_recalculate_or_update(monkeypatch):
+    db = Session()
+    security, as_of = seed_complete_inputs(db)
+    service = AlphaScoreService()
+    existing = service.score(db, security.id, as_of)
+    existing.total = 12.345
+    db.commit()
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("existing score must not be recalculated")
+
+    monkeypatch.setattr(service, "_score_values", fail_if_called)
+    result = service.batch(
+        db,
+        as_of,
+        [security.id],
+        "20d",
+        "v1.0",
+        skip_existing=True,
+    )
+
+    db.expire_all()
+    stored = db.query(ScoreSnapshot).one()
+    assert result == {
+        "success": 0,
+        "failed": [],
+        "skipped_existing_ids": [security.id],
+    }
+    assert stored.total == pytest.approx(12.345)
+    assert db.query(ScoreSnapshot).count() == 1
+
+
+def test_skip_existing_batch_inserts_only_new_score():
+    db = Session()
+    security, as_of = seed_complete_inputs(db)
+    result = AlphaScoreService().batch(
+        db,
+        as_of,
+        [security.id],
+        "20d",
+        "v1.0",
+        skip_existing=True,
+    )
+    assert result == {"success": 1, "failed": [], "skipped_existing_ids": []}
+    assert db.query(ScoreSnapshot).count() == 1
+
+
+def test_skip_existing_unique_conflict_is_treated_as_concurrent_skip(monkeypatch):
+    service = AlphaScoreService()
+    db = Mock()
+    existing = ScoreSnapshot(
+        security_id=1,
+        as_of_date=date(2025, 6, 30),
+        horizon="20d",
+        version="v1.0",
+        component={},
+        total=55.0,
+        weights={},
+        explanations={},
+        completeness=1.0,
+        config_hash="existing",
+    )
+    monkeypatch.setattr(
+        service,
+        "_find_score",
+        Mock(side_effect=[None, None, existing]),
+    )
+    monkeypatch.setattr(
+        service,
+        "_score_values",
+        Mock(return_value={
+            "component": {},
+            "total": 99.0,
+            "confidence": 1.0,
+            "weights": {},
+            "explanations": {},
+            "completeness": 1.0,
+            "config_hash": "new",
+        }),
+    )
+    db.commit.side_effect = IntegrityError("INSERT", {}, Exception("duplicate"))
+
+    row, created = service.score_if_missing(
+        db, 1, date(2025, 6, 30), "20d", "v1.0"
+    )
+
+    assert row is existing
+    assert created is False
+    db.rollback.assert_called_once()
+    assert existing.total == 55.0
 
 
 def test_score_api_routes_are_registered():

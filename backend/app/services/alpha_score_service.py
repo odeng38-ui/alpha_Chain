@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Optional, Tuple
 
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.schema import (
@@ -235,8 +236,29 @@ class AlphaScoreService:
         db.flush()
         return result
 
-    def score(self, db: Session, security_id: int, as_of: date, horizon: str = "20d",
-              version: str = "v1.0") -> ScoreSnapshot:
+    @staticmethod
+    def _find_score(
+        db: Session,
+        security_id: int,
+        as_of: date,
+        horizon: str,
+        version: str,
+    ) -> Optional[ScoreSnapshot]:
+        return db.query(ScoreSnapshot).filter_by(
+            security_id=security_id,
+            as_of_date=as_of,
+            horizon=horizon,
+            version=version,
+        ).first()
+
+    def _score_values(
+        self,
+        db: Session,
+        security_id: int,
+        as_of: date,
+        horizon: str,
+        version: str,
+    ) -> Dict:
         security = db.get(Security, security_id)
         if not security:
             raise LookupError("security not found")
@@ -261,31 +283,99 @@ class AlphaScoreService:
                                    for name in COMPONENTS if components[name] is None],
         }
         config_hash = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
-        row = db.query(ScoreSnapshot).filter_by(
-            security_id=security_id, as_of_date=as_of, horizon=horizon, version=version,
-        ).first() or ScoreSnapshot(
+        return {
+            "component": components,
+            "total": round(total, 6),
+            "confidence": confidence,
+            "weights": config["weights"],
+            "explanations": explanations,
+            "completeness": completeness,
+            "config_hash": config_hash,
+        }
+
+    def score(self, db: Session, security_id: int, as_of: date, horizon: str = "20d",
+              version: str = "v1.0") -> ScoreSnapshot:
+        values = self._score_values(db, security_id, as_of, horizon, version)
+        row = self._find_score(db, security_id, as_of, horizon, version) or ScoreSnapshot(
             security_id=security_id, as_of_date=as_of, horizon=horizon, version=version,
         )
         db.add(row)
-        row.component, row.total, row.confidence = components, round(total, 6), confidence
-        row.weights, row.explanations, row.completeness = config["weights"], explanations, completeness
-        row.config_hash = config_hash
+        for name, value in values.items():
+            setattr(row, name, value)
         db.commit()
         db.refresh(row)
         return row
 
+    def score_if_missing(
+        self,
+        db: Session,
+        security_id: int,
+        as_of: date,
+        horizon: str = "20d",
+        version: str = "v1.0",
+    ) -> Tuple[ScoreSnapshot, bool]:
+        existing = self._find_score(db, security_id, as_of, horizon, version)
+        if existing is not None:
+            return existing, False
+
+        values = self._score_values(db, security_id, as_of, horizon, version)
+
+        # Recheck immediately before INSERT. The unique index remains the
+        # authoritative guard if another worker inserts after this SELECT.
+        if self._find_score(db, security_id, as_of, horizon, version) is not None:
+            db.rollback()
+            existing = self._find_score(db, security_id, as_of, horizon, version)
+            if existing is None:
+                raise RuntimeError("score disappeared during skip_existing recheck")
+            return existing, False
+
+        row = ScoreSnapshot(
+            security_id=security_id,
+            as_of_date=as_of,
+            horizon=horizon,
+            version=version,
+            **values,
+        )
+        db.add(row)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            existing = self._find_score(db, security_id, as_of, horizon, version)
+            if existing is None:
+                raise
+            return existing, False
+        db.refresh(row)
+        return row, True
+
     def batch(self, db: Session, as_of: date, security_ids: Optional[Iterable[int]] = None,
-              horizon: str = "20d", version: str = "v1.0") -> Dict:
+              horizon: str = "20d", version: str = "v1.0",
+              skip_existing: bool = False) -> Dict:
         query = db.query(Security).filter(Security.security_type == "COMMON")
-        if security_ids:
+        if security_ids is not None:
             query = query.filter(Security.id.in_(security_ids))
-        success, failed = 0, []
+        success, failed, skipped_existing_ids = 0, [], []
         for security in query.order_by(Security.id):
             try:
-                self.score(db, security.id, as_of, horizon, version)
-                success += 1
+                if skip_existing:
+                    _row, created = self.score_if_missing(
+                        db, security.id, as_of, horizon, version
+                    )
+                    if created:
+                        success += 1
+                    else:
+                        skipped_existing_ids.append(security.id)
+                else:
+                    self.score(db, security.id, as_of, horizon, version)
+                    success += 1
             except (ValueError, LookupError) as exc:
                 db.rollback()
                 failed.append({"security_id": security.id, "error": str(exc)})
-        return {"success": success, "failed": failed}
+        result = {
+            "success": success,
+            "failed": failed,
+        }
+        if skip_existing:
+            result["skipped_existing_ids"] = skipped_existing_ids
+        return result
 

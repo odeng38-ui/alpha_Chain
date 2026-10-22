@@ -507,8 +507,17 @@ def incremental_due_batch_update(
     priority_order = case(
         (Security.id.in_(priority_ids), 0), else_=1,
     ) if priority_ids else Security.id
+    missing_checkpoint_order = case(
+        (CollectionCheckpoint.security_id.is_(None), 0), else_=1,
+    )
     security_ids = [
-        row[0] for row in query.order_by(priority_order, Security.id).limit(batch_size).all()
+        row[0]
+        for row in query.order_by(
+            missing_checkpoint_order,
+            CollectionCheckpoint.updated_at,
+            priority_order,
+            Security.id,
+        ).limit(batch_size).all()
     ]
     priority_set = set(priority_ids)
     result = incremental_update(db, security_ids=security_ids, adapter=adapter).to_dict()

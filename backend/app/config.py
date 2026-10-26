@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./alphachain_dev.db")
+    DATABASE_DIRECT_URL: str = os.getenv("DATABASE_DIRECT_URL", "")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     
     DART_API_KEY: str = os.getenv("DART_API_KEY", "")
@@ -42,7 +43,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    @field_validator("DATABASE_URL")
+    @field_validator("DATABASE_URL", "DATABASE_DIRECT_URL")
     @classmethod
     def select_installed_postgres_driver(cls, value: str) -> str:
         """Keep generic PostgreSQL URLs on the installed psycopg2 driver."""

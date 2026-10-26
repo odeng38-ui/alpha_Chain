@@ -57,3 +57,22 @@ def test_price_collection_defaults_are_serverless_safe(monkeypatch):
 
     assert settings.CRON_BATCH_SIZE == 100
     assert settings.PRICE_FAILURE_RETRY_DAYS == 7
+
+
+def test_direct_postgres_url_selects_installed_psycopg2_driver():
+    settings = Settings(
+        DATABASE_URL="sqlite:///./test.db",
+        DATABASE_DIRECT_URL="postgresql://user:password@direct-database:5432/app",
+    )
+
+    assert settings.DATABASE_DIRECT_URL == (
+        "postgresql+psycopg2://user:password@direct-database:5432/app"
+    )
+
+
+def test_direct_database_url_defaults_to_empty(monkeypatch):
+    monkeypatch.delenv("DATABASE_DIRECT_URL", raising=False)
+
+    settings = Settings()
+
+    assert settings.DATABASE_DIRECT_URL == ""

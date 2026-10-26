@@ -3,9 +3,10 @@ from contextlib import contextmanager
 from typing import Iterator
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.config import settings
 
@@ -36,15 +37,40 @@ class AdvisoryLockError(RuntimeError):
     pass
 
 
+_advisory_lock_engine: Engine | None = None
+
+
+def create_advisory_lock_engine(database_direct_url: str) -> Engine:
+    if not database_direct_url:
+        raise AdvisoryLockError("DATABASE_DIRECT_URL is required for advisory locks")
+    url = make_url(database_direct_url)
+    host = (url.host or "").lower()
+    if url.get_backend_name() != "postgresql" or "pooler" in host:
+        raise AdvisoryLockError("DATABASE_DIRECT_URL must be a direct PostgreSQL URL")
+    return create_engine(
+        database_direct_url,
+        pool_pre_ping=True,
+        poolclass=NullPool,
+    )
+
+
+def get_advisory_lock_engine() -> Engine:
+    global _advisory_lock_engine
+    if _advisory_lock_engine is None:
+        _advisory_lock_engine = create_advisory_lock_engine(settings.DATABASE_DIRECT_URL)
+    return _advisory_lock_engine
+
+
 @contextmanager
 def postgres_advisory_lock(
     lock_key: int,
     *,
-    bind: Engine = engine,
+    bind: Engine | None = None,
     allow_sqlite: bool = False,
 ) -> Iterator[bool]:
-    """Hold a PostgreSQL session lock on a dedicated pooled connection."""
-    dialect_name = bind.dialect.name
+    """Hold a PostgreSQL session lock on one dedicated direct connection."""
+    lock_engine = bind or get_advisory_lock_engine()
+    dialect_name = lock_engine.dialect.name
     if dialect_name == "sqlite" and allow_sqlite:
         yield True
         return
@@ -55,7 +81,7 @@ def postgres_advisory_lock(
     acquired = False
     body_failed = False
     try:
-        connection = bind.connect()
+        connection = lock_engine.connect()
         acquired = bool(connection.execute(
             text("SELECT pg_try_advisory_lock(:lock_key)"),
             {"lock_key": lock_key},

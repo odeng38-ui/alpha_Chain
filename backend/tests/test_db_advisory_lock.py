@@ -2,7 +2,13 @@ import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.db.session import AdvisoryLockError, postgres_advisory_lock
+from app.db import session as db_session
+from app.db.session import (
+    AdvisoryLockError,
+    create_advisory_lock_engine,
+    get_advisory_lock_engine,
+    postgres_advisory_lock,
+)
 
 
 class FakeDialect:
@@ -159,3 +165,32 @@ def test_sqlite_requires_explicit_test_opt_in():
     with pytest.raises(AdvisoryLockError, match="unsupported"):
         with postgres_advisory_lock(17, bind=engine):
             pass
+
+
+def test_direct_url_creates_dedicated_null_pool_engine():
+    lock_engine = create_advisory_lock_engine(
+        "postgresql+psycopg2://user:password@direct-database:5432/app"
+    )
+    try:
+        assert lock_engine.url.host == "direct-database"
+        assert lock_engine.pool.__class__.__name__ == "NullPool"
+    finally:
+        lock_engine.dispose()
+
+
+def test_missing_direct_url_fails_closed_without_using_pooled_url(monkeypatch):
+    monkeypatch.setattr(db_session.settings, "DATABASE_URL", "postgresql://pooled-host/app")
+    monkeypatch.setattr(db_session.settings, "DATABASE_DIRECT_URL", "")
+    monkeypatch.setattr(db_session, "_advisory_lock_engine", None)
+
+    with pytest.raises(AdvisoryLockError, match="DATABASE_DIRECT_URL"):
+        get_advisory_lock_engine()
+
+    assert db_session._advisory_lock_engine is None
+
+
+def test_pooler_host_is_rejected_for_direct_lock_engine():
+    with pytest.raises(AdvisoryLockError, match="direct PostgreSQL"):
+        create_advisory_lock_engine(
+            "postgresql+psycopg2://user:password@ep-example-pooler.region.aws.neon.tech/app"
+        )

@@ -1,9 +1,20 @@
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 from app.api.v1.endpoints import cron
+
+
+@contextmanager
+def acquired_price_lock():
+    yield True
+
+
+@contextmanager
+def rejected_price_lock():
+    yield False
 
 
 def test_cron_rejects_request_when_secret_is_missing(monkeypatch):
@@ -31,6 +42,7 @@ def test_cron_runs_bounded_batch_with_valid_token(monkeypatch):
     monkeypatch.setattr(cron.settings, "CRON_SECRET", "expected")
     monkeypatch.setattr(cron.settings, "CRON_BATCH_SIZE", 250)
     monkeypatch.setattr(cron.settings, "DART_CRON_BATCH_SIZE", 9)
+    monkeypatch.setattr(cron, "price_collection_advisory_lock", acquired_price_lock)
     monkeypatch.setattr(cron, "_record_cron_success", lambda db, job_name: None)
     monkeypatch.setattr(
         cron,
@@ -175,3 +187,47 @@ def test_weekly_macro_sync_reuses_same_iso_week_run():
         "status": "SKIPPED",
         "reason": "ALREADY_COMPLETED_THIS_WEEK",
     }
+
+def test_price_cron_returns_lock_conflict_without_running_jobs(monkeypatch):
+    monkeypatch.setattr(cron.settings, "CRON_SECRET", "expected")
+    monkeypatch.setattr(cron, "price_collection_advisory_lock", rejected_price_lock)
+    monkeypatch.setattr(
+        cron,
+        "incremental_due_batch_update",
+        lambda *args, **kwargs: pytest.fail("price batch must not run"),
+    )
+    monkeypatch.setattr(
+        cron,
+        "run_daily_news_backtest",
+        lambda *args, **kwargs: pytest.fail("news job must not run"),
+    )
+    monkeypatch.setattr(
+        cron,
+        "run_due_dart_filings",
+        lambda *args, **kwargs: pytest.fail("DART job must not run"),
+    )
+
+    result = cron.collect_due_prices(authorization="Bearer expected", db="db")
+
+    assert result == {
+        "status": "LOCKED",
+        "lock_acquired": False,
+        "processed": 0,
+        "security_ids": [],
+    }
+
+
+def test_price_cron_reports_lock_database_error(monkeypatch):
+    @contextmanager
+    def failed_lock():
+        raise cron.AdvisoryLockError("connect failed")
+        yield
+
+    monkeypatch.setattr(cron.settings, "CRON_SECRET", "expected")
+    monkeypatch.setattr(cron, "price_collection_advisory_lock", failed_lock)
+
+    with pytest.raises(HTTPException) as exc_info:
+        cron.collect_due_prices(authorization="Bearer expected", db="db")
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Price collection lock unavailable"

@@ -11,7 +11,7 @@ from app.adapters.gdelt_news_adapter import GdeltNewsAdapter
 from app.adapters.google_news_adapter import FallbackNewsAdapter, GoogleNewsRssAdapter
 from app.adapters.us_market_adapter import YahooUSMarketAdapter
 from app.config import settings
-from app.db.session import get_db
+from app.db.session import AdvisoryLockError, get_db, postgres_advisory_lock
 from app.models.schema import AuditLog, BacktestRun, Company, DartSyncState, GlobalEvent, Security
 from app.services.audit_service import record_audit
 from app.services.dart_service import DartCollectionService
@@ -27,6 +27,12 @@ from app.services.price_service import incremental_due_batch_update
 from app.services.us_market_event_service import USMarketEventService
 
 router = APIRouter(prefix="/cron", tags=["Cron"])
+
+PRICE_COLLECTION_ADVISORY_LOCK_KEY = 7_140_022_001
+
+
+def price_collection_advisory_lock():
+    return postgres_advisory_lock(PRICE_COLLECTION_ADVISORY_LOCK_KEY)
 
 
 def _authorize_cron(authorization: str | None):
@@ -226,10 +232,24 @@ def collect_due_prices(
 ):
     """Run one bounded daily-price batch from Vercel Cron."""
     _authorize_cron(authorization)
-    result = incremental_due_batch_update(
-        db,
-        batch_size=max(1, min(settings.CRON_BATCH_SIZE, 100)),
-    )
+    try:
+        with price_collection_advisory_lock() as lock_acquired:
+            if not lock_acquired:
+                return {
+                    "status": "LOCKED",
+                    "lock_acquired": False,
+                    "processed": 0,
+                    "security_ids": [],
+                }
+            result = incremental_due_batch_update(
+                db,
+                batch_size=max(1, min(settings.CRON_BATCH_SIZE, 100)),
+            )
+    except AdvisoryLockError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Price collection lock unavailable",
+        ) from exc
     result["news_backtest"] = run_daily_news_backtest(db)
     result["dart"] = run_due_dart_filings(
         db,

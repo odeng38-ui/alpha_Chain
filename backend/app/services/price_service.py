@@ -9,11 +9,12 @@ PriceService — 백필(backfill) 및 증분(incremental) 주가 수집 오케�
 
 import logging
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, case, func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.adapters.base import AdapterError, BrokerAdapter, DataNotFoundError, OHLCVRecord
 from app.adapters.pykrx_adapter import PykrxAdapter
@@ -30,6 +31,42 @@ from app.models.schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+SEOUL_TIMEZONE = ZoneInfo("Asia/Seoul")
+PRICE_DATA_READY_TIME = time(16, 30)
+TRADING_DAY_LOOKBACK_DAYS = 14
+
+
+class TargetTradeDateUnavailable(RuntimeError):
+    pass
+
+
+def determine_target_trade_date(
+    adapter: BrokerAdapter,
+    *,
+    now: Optional[datetime] = None,
+    market: str = "KOSPI",
+    data_ready_time: time = PRICE_DATA_READY_TIME,
+) -> date:
+    """Return the latest closed Korean trading day with provider data expected."""
+    current = now or datetime.now(SEOUL_TIMEZONE)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=SEOUL_TIMEZONE)
+    else:
+        current = current.astimezone(SEOUL_TIMEZONE)
+    eligible_end = current.date()
+    if current.time().replace(tzinfo=None) < data_ready_time:
+        eligible_end -= timedelta(days=1)
+    start = eligible_end - timedelta(days=TRADING_DAY_LOOKBACK_DAYS)
+    try:
+        trading_days = adapter.get_trading_days(start, eligible_end, market)
+    except AdapterError as exc:
+        raise TargetTradeDateUnavailable("trading calendar lookup failed") from exc
+    candidates = [day for day in trading_days if start <= day <= eligible_end]
+    if not candidates:
+        raise TargetTradeDateUnavailable("no trading day found in lookup window")
+    return max(candidates)
+
 
 # 기본 어댑터 인스턴스 (싱글턴처럼 사용)
 _default_adapter: Optional[BrokerAdapter] = None
@@ -309,6 +346,7 @@ def incremental_update(
     db: Session,
     security_ids: Optional[List[int]] = None,
     adapter: Optional[BrokerAdapter] = None,
+    target_trade_date: Optional[date] = None,
 ) -> IncrementalResult:
     """
     증분 수집: 각 종목의 마지막 적재일 이후 데이터만 수집.
@@ -333,17 +371,17 @@ def incremental_update(
         securities = db.query(Security).filter(Security.id.in_(security_ids)).all()
 
     result = IncrementalResult()
-    today = date.today()
+    collection_end = target_trade_date or date.today()
 
     for sec in securities:
         last_date = _get_last_trade_date(db, sec.id)
         if last_date is None:
             # DB에 데이터 없음 → 승인 기준에 맞춰 최근 5년 백필
-            start = today - timedelta(days=settings.PRICE_INITIAL_LOOKBACK_DAYS)
+            start = collection_end - timedelta(days=settings.PRICE_INITIAL_LOOKBACK_DAYS)
         else:
             start = last_date + timedelta(days=1)
 
-        if start > today:
+        if start > collection_end:
             logger.debug(
                 "[증분] %s — 이미 최신 (last_date=%s)", sec.ticker, last_date
             )
@@ -353,12 +391,12 @@ def incremental_update(
             records = adapter.fetch_ohlcv(
                 ticker=sec.ticker,
                 start_date=start,
-                end_date=today,
+                end_date=collection_end,
                 market=sec.market,
             )
 
             inserted_count, skipped_count = _store_price_records(db, sec.id, records)
-            _save_checkpoint(db, sec.id, "SUCCESS", today)
+            _save_checkpoint(db, sec.id, "SUCCESS", collection_end)
             db.commit()
             result.updated_securities += 1
             result.total_inserted += inserted_count
@@ -366,7 +404,7 @@ def incremental_update(
 
             logger.info(
                 "[증분] %s: %s ~ %s → 적재 %d건",
-                sec.ticker, start, today, inserted_count,
+                sec.ticker, start, collection_end, inserted_count,
             )
 
         except DataNotFoundError as exc:
@@ -468,40 +506,106 @@ def active_news_candidate_security_ids(
         NewsArticle.published_at >= cutoff,
     ).distinct().all()]
 
+def price_collection_coverage(
+    db: Session,
+    *,
+    target_trade_date: date,
+    retry_now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Calculate active-common coverage from stored prices, not checkpoint success."""
+    active_filter = (
+        Security.security_type == "COMMON",
+        Security.effective_to.is_(None),
+    )
+    active_count = db.query(func.count(Security.id)).filter(*active_filter).scalar() or 0
+    completed_count = db.query(func.count(Security.id)).join(
+        DailyPrice,
+        and_(
+            DailyPrice.security_id == Security.id,
+            DailyPrice.trade_date == target_trade_date,
+        ),
+    ).filter(*active_filter).scalar() or 0
+    missing_count = max(active_count - completed_count, 0)
+    failed_base = db.query(func.count(Security.id)).join(
+        CollectionCheckpoint,
+        and_(
+            CollectionCheckpoint.security_id == Security.id,
+            CollectionCheckpoint.job_name == "daily_price",
+        ),
+    ).outerjoin(
+        DailyPrice,
+        and_(
+            DailyPrice.security_id == Security.id,
+            DailyPrice.trade_date == target_trade_date,
+        ),
+    ).filter(
+        *active_filter,
+        DailyPrice.security_id.is_(None),
+        CollectionCheckpoint.status == "FAILED",
+    )
+    failed_count = failed_base.scalar() or 0
+    retry_before = (retry_now or datetime.utcnow()) - timedelta(
+        days=settings.PRICE_FAILURE_RETRY_DAYS
+    )
+    retry_waiting_count = failed_base.filter(
+        CollectionCheckpoint.updated_at >= retry_before,
+    ).scalar() or 0
+    completion_rate = round((completed_count / active_count) * 100, 2) if active_count else 0.0
+    return {
+        "target_trade_date": target_trade_date.isoformat(),
+        "active_count": active_count,
+        "completed_count": completed_count,
+        "missing_count": missing_count,
+        "completion_rate": completion_rate,
+        "failed_count": failed_count,
+        "retry_waiting_count": retry_waiting_count,
+    }
+
+
 def incremental_due_batch_update(
     db: Session,
     *,
     batch_size: int = 20,
     adapter: Optional[BrokerAdapter] = None,
+    target_trade_date: Optional[date] = None,
+    attempted_after: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    """Process active securities not successfully collected today."""
-    today = date.today()
+    """Process one bounded batch missing the target trading day's stored price."""
+    if adapter is None:
+        adapter = get_default_adapter()
+    target = target_trade_date or determine_target_trade_date(adapter)
     retry_before = datetime.utcnow() - timedelta(days=settings.PRICE_FAILURE_RETRY_DAYS)
+    target_price = aliased(DailyPrice)
     query = db.query(Security.id).outerjoin(
         CollectionCheckpoint,
         and_(
             CollectionCheckpoint.security_id == Security.id,
             CollectionCheckpoint.job_name == "daily_price",
         ),
+    ).outerjoin(
+        target_price,
+        and_(
+            target_price.security_id == Security.id,
+            target_price.trade_date == target,
+        ),
     ).filter(
         Security.security_type == "COMMON",
         Security.effective_to.is_(None),
+        target_price.security_id.is_(None),
         or_(
             CollectionCheckpoint.security_id.is_(None),
-            and_(
-                CollectionCheckpoint.status == "SUCCESS",
-                or_(
-                    CollectionCheckpoint.last_success_date.is_(None),
-                    CollectionCheckpoint.last_success_date < today,
-                ),
-            ),
+            CollectionCheckpoint.status != "FAILED",
             and_(
                 CollectionCheckpoint.status == "FAILED",
                 CollectionCheckpoint.updated_at < retry_before,
             ),
-            CollectionCheckpoint.status.notin_(("SUCCESS", "FAILED")),
         ),
     )
+    if attempted_after is not None:
+        query = query.filter(or_(
+            CollectionCheckpoint.security_id.is_(None),
+            CollectionCheckpoint.updated_at < attempted_after,
+        ))
     total_candidates = query.count()
     priority_ids = active_news_candidate_security_ids(db)
     priority_order = case(
@@ -520,10 +624,16 @@ def incremental_due_batch_update(
         ).limit(batch_size).all()
     ]
     priority_set = set(priority_ids)
-    result = incremental_update(db, security_ids=security_ids, adapter=adapter).to_dict()
+    result = incremental_update(
+        db,
+        security_ids=security_ids,
+        adapter=adapter,
+        target_trade_date=target,
+    ).to_dict()
     processed = len(security_ids)
     return {
         **result,
+        "target_trade_date": target.isoformat(),
         "batch_size": batch_size,
         "processed": processed,
         "total_candidates": total_candidates,

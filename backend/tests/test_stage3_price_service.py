@@ -6,6 +6,7 @@ MockAdapter를 사용하여 실제 KRX 호출 없이 로직을 검증한다.
 
 from datetime import date, datetime, timedelta
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine
@@ -107,6 +108,15 @@ class MockAdapter(BrokerAdapter):
 # 헬퍼                                                                  #
 # ------------------------------------------------------------------ #
 
+class CalendarMockAdapter(MockAdapter):
+    def __init__(self, trading_days, records=None):
+        super().__init__(records)
+        self._trading_days = trading_days
+
+    def get_trading_days(self, start_date, end_date, market="KOSPI") -> List[date]:
+        return [day for day in self._trading_days if start_date <= day <= end_date]
+
+
 def create_test_security(db, ticker="005930", market="KOSPI") -> Security:
     company = Company(name="테스트기업", corp_code="12345678", status="ACTIVE")
     db.add(company)
@@ -126,6 +136,46 @@ def create_test_security(db, ticker="005930", market="KOSPI") -> Security:
 # ------------------------------------------------------------------ #
 # 백필 테스트                                                            #
 # ------------------------------------------------------------------ #
+
+def add_price(db, security_id: int, trade_date: date) -> None:
+    db.add(DailyPrice(
+        security_id=security_id,
+        trade_date=trade_date,
+        open=100,
+        high=100,
+        low=100,
+        close=100,
+        adjusted_close=100,
+    ))
+    db.commit()
+
+
+SEOUL = ZoneInfo("Asia/Seoul")
+
+
+@pytest.mark.parametrize(
+    ("now", "trading_days", "expected"),
+    [
+        (datetime(2026, 10, 26, 16, 30, tzinfo=SEOUL), [date(2026, 10, 23), date(2026, 10, 26)], date(2026, 10, 26)),
+        (datetime(2026, 10, 24, 18, 0, tzinfo=SEOUL), [date(2026, 10, 23)], date(2026, 10, 23)),
+        (datetime(2026, 10, 9, 18, 0, tzinfo=SEOUL), [date(2026, 10, 8)], date(2026, 10, 8)),
+        (datetime(2026, 10, 26, 15, 29, tzinfo=SEOUL), [date(2026, 10, 23), date(2026, 10, 26)], date(2026, 10, 23)),
+        (datetime(2026, 10, 26, 16, 29, tzinfo=SEOUL), [date(2026, 10, 23), date(2026, 10, 26)], date(2026, 10, 23)),
+    ],
+)
+def test_determine_target_trade_date_uses_market_calendar_and_data_delay(now, trading_days, expected):
+    adapter = CalendarMockAdapter(trading_days)
+
+    assert price_service.determine_target_trade_date(adapter, now=now) == expected
+
+
+def test_determine_target_trade_date_does_not_fallback_when_calendar_is_empty():
+    with pytest.raises(price_service.TargetTradeDateUnavailable):
+        price_service.determine_target_trade_date(
+            CalendarMockAdapter([]),
+            now=datetime(2026, 10, 26, 18, 0, tzinfo=SEOUL),
+        )
+
 
 class TestBackfillSecurity:
     def test_backfill_inserts_records(self, db):
@@ -355,11 +405,13 @@ def test_due_batch_skips_security_already_successful_today(db):
         )
     )
     db.commit()
+    add_price(db, completed.id, date.today())
 
     result = price_service.incremental_due_batch_update(
         db,
         batch_size=1,
         adapter=MockAdapter([]),
+        target_trade_date=date.today(),
     )
 
     assert result["security_ids"] == [due.id]
@@ -583,3 +635,129 @@ def test_import_price_records_rejects_ticker_mismatch(db):
         )
 
     assert db.query(DailyPrice).count() == 0
+
+def test_due_batch_does_not_repeat_attempt_within_same_run(db):
+    security = create_test_security(db, ticker="000010")
+    target = date(2026, 10, 26)
+    run_started_at = datetime.utcnow() - timedelta(seconds=1)
+
+    first = price_service.incremental_due_batch_update(
+        db,
+        batch_size=1,
+        adapter=MockAdapter([]),
+        target_trade_date=target,
+        attempted_after=run_started_at,
+    )
+    second = price_service.incremental_due_batch_update(
+        db,
+        batch_size=1,
+        adapter=MockAdapter([]),
+        target_trade_date=target,
+        attempted_after=run_started_at,
+    )
+
+    assert first["security_ids"] == [security.id]
+    assert second["security_ids"] == []
+    assert second["processed"] == 0
+
+
+def test_due_batch_only_selects_active_common_securities(db):
+    companies = [
+        Company(name="Active Common", corp_code="41000001", status="ACTIVE"),
+        Company(name="Preferred", corp_code="41000002", status="ACTIVE"),
+        Company(name="Delisted", corp_code="41000003", status="ACTIVE"),
+    ]
+    db.add_all(companies)
+    db.flush()
+    active = Security(
+        company_id=companies[0].id,
+        market="KOSPI",
+        ticker="000011",
+        security_type="COMMON",
+    )
+    preferred = Security(
+        company_id=companies[1].id,
+        market="KOSPI",
+        ticker="000012",
+        security_type="PREFERRED",
+    )
+    delisted = Security(
+        company_id=companies[2].id,
+        market="KOSPI",
+        ticker="000013",
+        security_type="COMMON",
+        effective_to=date(2026, 10, 1),
+    )
+    db.add_all([active, preferred, delisted])
+    db.commit()
+
+    result = price_service.incremental_due_batch_update(
+        db,
+        batch_size=10,
+        adapter=MockAdapter([]),
+        target_trade_date=date(2026, 10, 26),
+    )
+
+    assert result["security_ids"] == [active.id]
+
+
+def test_price_collection_coverage_uses_daily_prices_and_active_universe(db, monkeypatch):
+    target = date(2026, 10, 26)
+    now = datetime(2026, 10, 27, 0, 0)
+    companies = [
+        Company(name="Covered", corp_code="42000001", status="ACTIVE"),
+        Company(name="Failed", corp_code="42000002", status="ACTIVE"),
+        Company(name="Missing", corp_code="42000003", status="ACTIVE"),
+        Company(name="Ignored", corp_code="42000004", status="ACTIVE"),
+    ]
+    db.add_all(companies)
+    db.flush()
+    securities = [
+        Security(company_id=companies[0].id, market="KOSPI", ticker="000021", security_type="COMMON"),
+        Security(company_id=companies[1].id, market="KOSPI", ticker="000022", security_type="COMMON"),
+        Security(company_id=companies[2].id, market="KOSPI", ticker="000023", security_type="COMMON"),
+        Security(company_id=companies[3].id, market="KOSPI", ticker="000024", security_type="PREFERRED"),
+    ]
+    db.add_all(securities)
+    db.flush()
+    db.add(DailyPrice(
+        security_id=securities[0].id,
+        trade_date=target,
+        open=100,
+        high=100,
+        low=100,
+        close=100,
+        adjusted_close=100,
+    ))
+    db.add_all([
+        CollectionCheckpoint(
+            job_name="daily_price",
+            security_id=securities[0].id,
+            status="FAILED",
+            updated_at=now,
+        ),
+        CollectionCheckpoint(
+            job_name="daily_price",
+            security_id=securities[1].id,
+            status="FAILED",
+            updated_at=now - timedelta(days=1),
+        ),
+    ])
+    db.commit()
+    monkeypatch.setattr(price_service.settings, "PRICE_FAILURE_RETRY_DAYS", 7)
+
+    coverage = price_service.price_collection_coverage(
+        db,
+        target_trade_date=target,
+        retry_now=now,
+    )
+
+    assert coverage == {
+        "target_trade_date": "2026-10-26",
+        "active_count": 3,
+        "completed_count": 1,
+        "missing_count": 2,
+        "completion_rate": 33.33,
+        "failed_count": 1,
+        "retry_waiting_count": 1,
+    }

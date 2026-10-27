@@ -3,9 +3,12 @@ from pathlib import Path
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 APP_ENV = os.getenv("APP_ENV", "development")
+D2_PREVIEW_GIT_REF = "phase-d2-daily-prices"
 
 
 class Settings(BaseSettings):
@@ -16,6 +19,12 @@ class Settings(BaseSettings):
     
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./alphachain_dev.db")
     DATABASE_DIRECT_URL: str = os.getenv("DATABASE_DIRECT_URL", "")
+    D2_PREVIEW_DATABASE_URL: str = os.getenv("D2_PREVIEW_DATABASE_URL", "")
+    D2_PREVIEW_DATABASE_DIRECT_URL: str = os.getenv(
+        "D2_PREVIEW_DATABASE_DIRECT_URL", ""
+    )
+    VERCEL_ENV: str = os.getenv("VERCEL_ENV", "")
+    VERCEL_GIT_COMMIT_REF: str = os.getenv("VERCEL_GIT_COMMIT_REF", "")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     
     DART_API_KEY: str = os.getenv("DART_API_KEY", "")
@@ -41,9 +50,15 @@ class Settings(BaseSettings):
         case_sensitive=True,
         env_file=(PROJECT_ROOT / ".env", PROJECT_ROOT / f".env.{APP_ENV}"),
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
-    @field_validator("DATABASE_URL", "DATABASE_DIRECT_URL")
+    @field_validator(
+        "DATABASE_URL",
+        "DATABASE_DIRECT_URL",
+        "D2_PREVIEW_DATABASE_URL",
+        "D2_PREVIEW_DATABASE_DIRECT_URL",
+    )
     @classmethod
     def select_installed_postgres_driver(cls, value: str) -> str:
         """Keep generic PostgreSQL URLs on the installed psycopg2 driver."""
@@ -63,7 +78,73 @@ class Settings(BaseSettings):
                 raise ValueError("SECRET_KEY must be set in production")
             if not self.ADMIN_API_KEY:
                 raise ValueError("ADMIN_API_KEY must be set in production")
+        self._validate_d2_preview_database_urls()
         return self
+
+    def _validate_d2_preview_database_urls(self) -> None:
+        is_preview = self.VERCEL_ENV == "preview"
+        is_d2_branch = self.VERCEL_GIT_COMMIT_REF == D2_PREVIEW_GIT_REF
+        has_d2_urls = bool(
+            self.D2_PREVIEW_DATABASE_URL or self.D2_PREVIEW_DATABASE_DIRECT_URL
+        )
+
+        if is_preview and is_d2_branch:
+            if not self.D2_PREVIEW_DATABASE_URL:
+                raise ValueError("D-2 Preview pooled database URL is required")
+            if not self.D2_PREVIEW_DATABASE_DIRECT_URL:
+                raise ValueError("D-2 Preview direct database URL is required")
+            pooled_url = self._validated_postgres_url(
+                self.D2_PREVIEW_DATABASE_URL,
+                "D-2 Preview pooled database URL must be PostgreSQL",
+            )
+            direct_url = self._validated_postgres_url(
+                self.D2_PREVIEW_DATABASE_DIRECT_URL,
+                "D-2 Preview direct database URL must be PostgreSQL",
+            )
+            integration_url = self._validated_postgres_url(
+                self.DATABASE_URL,
+                "DATABASE_URL must be PostgreSQL for D-2 Preview",
+            )
+            if "pooler" in (direct_url.host or "").lower():
+                raise ValueError("D-2 Preview direct database URL cannot use a pooler")
+            if pooled_url == integration_url:
+                raise ValueError(
+                    "D-2 Preview pooled database URL must differ from DATABASE_URL"
+                )
+            return
+
+        if is_preview and has_d2_urls:
+            raise ValueError(
+                "D-2 Preview database URLs require the approved Preview Git branch"
+            )
+
+    @staticmethod
+    def _validated_postgres_url(value: str, message: str):
+        try:
+            url = make_url(value)
+        except ArgumentError as exc:
+            raise ValueError(message) from exc
+        if url.get_backend_name() != "postgresql":
+            raise ValueError(message)
+        return url
+
+    @property
+    def effective_database_url(self) -> str:
+        if (
+            self.VERCEL_ENV == "preview"
+            and self.VERCEL_GIT_COMMIT_REF == D2_PREVIEW_GIT_REF
+        ):
+            return self.D2_PREVIEW_DATABASE_URL
+        return self.DATABASE_URL
+
+    @property
+    def effective_database_direct_url(self) -> str:
+        if (
+            self.VERCEL_ENV == "preview"
+            and self.VERCEL_GIT_COMMIT_REF == D2_PREVIEW_GIT_REF
+        ):
+            return self.D2_PREVIEW_DATABASE_DIRECT_URL
+        return self.DATABASE_DIRECT_URL
 
     @property
     def cors_origins(self) -> list[str]:

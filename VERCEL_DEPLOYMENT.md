@@ -38,6 +38,17 @@ Set these for Preview and Production:
 - `CRON_BATCH_SIZE=20`
 - External provider keys required by enabled ingestion jobs
 
+For the `phase-d2-daily-prices` Preview branch, set both of these branch-scoped
+variables before deploying:
+
+- `D2_PREVIEW_DATABASE_URL` (pooled URL for the approved Neon Preview branch)
+- `D2_PREVIEW_DATABASE_DIRECT_URL` (direct URL for the same Preview branch)
+
+That branch fails configuration before SQLAlchemy or Alembic can connect when
+either variable is missing or invalid. Other Preview branches continue to use
+the existing Neon Integration `DATABASE_URL`. Do not print either URL while
+verifying the branch-scoped variables.
+
 The application automatically disables APScheduler when Vercel's `VERCEL` variable is present.
 
 ## 4. Verify

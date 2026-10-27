@@ -13,10 +13,11 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # SQLite requires check_same_thread=False, PostgreSQL does not
-connect_args = {"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {}
+database_url = settings.effective_database_url
+connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
 
 engine = create_engine(
-    settings.DATABASE_URL,
+    database_url,
     connect_args=connect_args,
     pool_pre_ping=True
 )
@@ -57,7 +58,9 @@ def create_advisory_lock_engine(database_direct_url: str) -> Engine:
 def get_advisory_lock_engine() -> Engine:
     global _advisory_lock_engine
     if _advisory_lock_engine is None:
-        _advisory_lock_engine = create_advisory_lock_engine(settings.DATABASE_DIRECT_URL)
+        _advisory_lock_engine = create_advisory_lock_engine(
+            settings.effective_database_direct_url
+        )
     return _advisory_lock_engine
 
 

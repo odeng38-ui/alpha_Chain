@@ -1,10 +1,12 @@
 import pytest
 from pydantic import ValidationError
 
-from app.config import Settings
+from app.config import D2_PREVIEW_ENDPOINT_ID, Settings
 
-D2_POOLED_URL = "postgresql://preview:secret@ep-preview-pooler.neon.tech/app"
-D2_DIRECT_URL = "postgresql://preview:secret@ep-preview.neon.tech/app"
+D2_POOLED_URL = (
+    f"postgresql://preview:secret@{D2_PREVIEW_ENDPOINT_ID}-pooler.neon.tech/app"
+)
+D2_DIRECT_URL = f"postgresql://preview:secret@{D2_PREVIEW_ENDPOINT_ID}.neon.tech/app"
 INTEGRATION_URL = "postgresql://production:secret@ep-production-pooler.neon.tech/app"
 
 
@@ -106,17 +108,74 @@ def test_d2_preview_selects_dedicated_database_urls():
     settings = Settings(
         VERCEL_ENV="preview",
         VERCEL_GIT_COMMIT_REF="phase-d2-daily-prices",
-        DATABASE_URL=INTEGRATION_URL,
+        DATABASE_URL=D2_POOLED_URL,
         D2_PREVIEW_DATABASE_URL=D2_POOLED_URL,
         D2_PREVIEW_DATABASE_DIRECT_URL=D2_DIRECT_URL,
     )
 
     assert settings.effective_database_url == (
-        "postgresql+psycopg2://preview:secret@ep-preview-pooler.neon.tech/app"
+        f"postgresql+psycopg2://preview:secret@{D2_PREVIEW_ENDPOINT_ID}-pooler.neon.tech/app"
     )
     assert settings.effective_database_direct_url == (
-        "postgresql+psycopg2://preview:secret@ep-preview.neon.tech/app"
+        f"postgresql+psycopg2://preview:secret@{D2_PREVIEW_ENDPOINT_ID}.neon.tech/app"
     )
+
+
+def test_d2_preview_accepts_same_endpoint_pooled_and_direct_urls():
+    settings = Settings(
+        VERCEL_ENV="preview",
+        VERCEL_GIT_COMMIT_REF="phase-d2-daily-prices",
+        DATABASE_URL=D2_POOLED_URL,
+        D2_PREVIEW_DATABASE_URL=(
+            f"postgresql://another-user:another-secret@"
+            f"{D2_PREVIEW_ENDPOINT_ID}-pooler.us-east-2.aws.neon.tech:5432/app"
+        ),
+        D2_PREVIEW_DATABASE_DIRECT_URL=(
+            f"postgresql://direct:direct-secret@"
+            f"{D2_PREVIEW_ENDPOINT_ID}.us-east-2.aws.neon.tech/app"
+        ),
+    )
+
+    assert settings.effective_database_url == settings.D2_PREVIEW_DATABASE_URL
+
+
+@pytest.mark.parametrize(
+    ("direct_url", "message"),
+    [
+        (
+            f"postgresql://preview:secret@{D2_PREVIEW_ENDPOINT_ID}.neon.tech/other",
+            "same endpoint, database, and port",
+        ),
+        (
+            f"postgresql://preview:secret@{D2_PREVIEW_ENDPOINT_ID}.neon.tech:5433/app",
+            "same endpoint, database, and port",
+        ),
+        (
+            "postgresql://preview:secret@ep-another.neon.tech/app",
+            "approved endpoint",
+        ),
+    ],
+)
+def test_d2_preview_rejects_mismatched_target(direct_url, message):
+    with pytest.raises(ValidationError, match=message):
+        Settings(
+            VERCEL_ENV="preview",
+            VERCEL_GIT_COMMIT_REF="phase-d2-daily-prices",
+            DATABASE_URL=D2_POOLED_URL,
+            D2_PREVIEW_DATABASE_URL=D2_POOLED_URL,
+            D2_PREVIEW_DATABASE_DIRECT_URL=direct_url,
+        )
+
+
+def test_d2_preview_rejects_unapproved_integration_endpoint():
+    with pytest.raises(ValidationError, match="approved endpoint"):
+        Settings(
+            VERCEL_ENV="preview",
+            VERCEL_GIT_COMMIT_REF="phase-d2-daily-prices",
+            DATABASE_URL=INTEGRATION_URL,
+            D2_PREVIEW_DATABASE_URL=D2_POOLED_URL,
+            D2_PREVIEW_DATABASE_DIRECT_URL=D2_DIRECT_URL,
+        )
 
 
 @pytest.mark.parametrize(
@@ -131,7 +190,7 @@ def test_d2_preview_selects_dedicated_database_urls():
             "postgresql://preview:secret@ep-preview-pooler.neon.tech/app",
             "direct database URL cannot use a pooler",
         ),
-        (INTEGRATION_URL, D2_DIRECT_URL, "must differ from DATABASE_URL"),
+        (D2_POOLED_URL, "postgresql://preview:secret@ep-unapproved.neon.tech/app", "approved endpoint"),
     ],
 )
 def test_d2_preview_rejects_unsafe_database_urls(pooled_url, direct_url, message):
@@ -139,7 +198,7 @@ def test_d2_preview_rejects_unsafe_database_urls(pooled_url, direct_url, message
         Settings(
             VERCEL_ENV="preview",
             VERCEL_GIT_COMMIT_REF="phase-d2-daily-prices",
-            DATABASE_URL=INTEGRATION_URL,
+            DATABASE_URL=D2_POOLED_URL,
             D2_PREVIEW_DATABASE_URL=pooled_url,
             D2_PREVIEW_DATABASE_DIRECT_URL=direct_url,
         )

@@ -9,6 +9,8 @@ from sqlalchemy.exc import ArgumentError
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 APP_ENV = os.getenv("APP_ENV", "development")
 D2_PREVIEW_GIT_REF = "phase-d2-daily-prices"
+D2_PREVIEW_ENDPOINT_ID = "ep-little-term-b7sjqj7m"
+POSTGRES_DEFAULT_PORT = 5432
 
 
 class Settings(BaseSettings):
@@ -107,9 +109,12 @@ class Settings(BaseSettings):
             )
             if "pooler" in (direct_url.host or "").lower():
                 raise ValueError("D-2 Preview direct database URL cannot use a pooler")
-            if pooled_url == integration_url:
+            integration_target = self._validated_d2_preview_target(integration_url)
+            pooled_target = self._validated_d2_preview_target(pooled_url)
+            direct_target = self._validated_d2_preview_target(direct_url)
+            if len({integration_target, pooled_target, direct_target}) != 1:
                 raise ValueError(
-                    "D-2 Preview pooled database URL must differ from DATABASE_URL"
+                    "D-2 Preview database URLs must use the same endpoint, database, and port"
                 )
             return
 
@@ -127,6 +132,18 @@ class Settings(BaseSettings):
         if url.get_backend_name() != "postgresql":
             raise ValueError(message)
         return url
+
+    @staticmethod
+    def _validated_d2_preview_target(url) -> tuple[str, str, int]:
+        host = (url.host or "").lower()
+        if not host.endswith(".neon.tech"):
+            raise ValueError("D-2 Preview database URL must use the approved endpoint")
+        endpoint_id = host.split(".", 1)[0]
+        if endpoint_id.endswith("-pooler"):
+            endpoint_id = endpoint_id.removesuffix("-pooler")
+        if endpoint_id != D2_PREVIEW_ENDPOINT_ID:
+            raise ValueError("D-2 Preview database URL must use the approved endpoint")
+        return endpoint_id, url.database or "", url.port or POSTGRES_DEFAULT_PORT
 
     @property
     def effective_database_url(self) -> str:

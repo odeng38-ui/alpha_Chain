@@ -1,0 +1,50 @@
+name: Daily price collection
+
+# Automatic scheduling is intentionally disabled in Phase D-2.2D.
+# Future weekday schedule after the Korean market data delay:
+#   16:45 Asia/Seoul = 07:45 UTC, cron: "45 7 * * 1-5"
+# Add an on.schedule entry only after Preview validation and separate approval.
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: Securities per bounded API call (1-100)
+        required: false
+        default: "100"
+      max_calls:
+        description: Maximum total HTTP calls including retries
+        required: false
+        default: "40"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-price-collection
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PRICE_COLLECTION_API_URL: ${{ vars.PRICE_COLLECTION_API_URL }}
+      PRICE_COLLECTION_CRON_SECRET: ${{ secrets.PRICE_COLLECTION_CRON_SECRET }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run bounded price collection
+        shell: bash
+        run: >-
+          python scripts/run_daily_price_collection.py
+          --batch-size "${{ inputs.batch_size }}"
+          --max-calls "${{ inputs.max_calls }}"
+          --request-timeout 60
+          --total-timeout 1800

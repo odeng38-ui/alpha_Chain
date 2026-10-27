@@ -231,3 +231,167 @@ def test_price_cron_reports_lock_database_error(monkeypatch):
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == "Price collection lock unavailable"
+
+
+def test_price_batch_rejects_invalid_token(monkeypatch):
+    monkeypatch.setattr(cron.settings, "CRON_SECRET", "expected")
+
+    with pytest.raises(HTTPException) as exc_info:
+        cron.collect_due_price_batch(
+            cron.PriceBatchRequest(),
+            authorization="Bearer wrong",
+            db=None,
+        )
+
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.parametrize("batch_size", [0, 101])
+def test_price_batch_validates_batch_size(batch_size):
+    with pytest.raises(ValueError):
+        cron.PriceBatchRequest(batch_size=batch_size)
+
+
+def test_price_batch_runs_prices_only_and_returns_coverage(monkeypatch):
+    due = {
+        "target_trade_date": "2026-10-26",
+        "processed": 2,
+        "remaining": 3,
+        "has_more": True,
+        "security_ids": [1, 2],
+    }
+    coverage = {
+        "target_trade_date": "2026-10-26",
+        "active_count": 10,
+        "completed_count": 5,
+        "missing_count": 5,
+        "completion_rate": 50.0,
+        "failed_count": 1,
+        "retry_waiting_count": 1,
+    }
+    monkeypatch.setattr(cron.settings, "CRON_SECRET", "expected")
+    monkeypatch.setattr(cron, "price_collection_advisory_lock", acquired_price_lock)
+    monkeypatch.setattr(
+        cron,
+        "incremental_due_batch_update",
+        lambda db, batch_size, attempted_after: due.copy()
+        if db == "db" and batch_size == 100 and attempted_after is not None else None,
+    )
+    monkeypatch.setattr(
+        cron,
+        "price_collection_coverage",
+        lambda db, target_trade_date: coverage.copy()
+        if db == "db" and target_trade_date.isoformat() == "2026-10-26" else None,
+    )
+    monkeypatch.setattr(
+        cron,
+        "run_daily_news_backtest",
+        lambda *args, **kwargs: pytest.fail("news must not run"),
+    )
+    monkeypatch.setattr(
+        cron,
+        "run_due_dart_filings",
+        lambda *args, **kwargs: pytest.fail("DART must not run"),
+    )
+
+    result = cron.collect_due_price_batch(
+        cron.PriceBatchRequest(),
+        authorization="Bearer expected",
+        db="db",
+    )
+
+    assert result == {**due, **coverage, "status": "PARTIAL"}
+
+
+def test_price_batch_returns_complete_when_no_candidates_or_missing_prices(monkeypatch):
+    due = {
+        "target_trade_date": "2026-10-26",
+        "processed": 0,
+        "remaining": 0,
+        "has_more": False,
+        "security_ids": [],
+    }
+    coverage = {
+        "target_trade_date": "2026-10-26",
+        "active_count": 10,
+        "completed_count": 10,
+        "missing_count": 0,
+        "completion_rate": 100.0,
+        "failed_count": 0,
+        "retry_waiting_count": 0,
+    }
+    monkeypatch.setattr(cron.settings, "CRON_SECRET", "expected")
+    monkeypatch.setattr(cron, "price_collection_advisory_lock", acquired_price_lock)
+    monkeypatch.setattr(cron, "incremental_due_batch_update", lambda *args, **kwargs: due.copy())
+    monkeypatch.setattr(cron, "price_collection_coverage", lambda *args, **kwargs: coverage.copy())
+
+    result = cron.collect_due_price_batch(
+        cron.PriceBatchRequest(batch_size=1),
+        authorization="Bearer expected",
+        db="db",
+    )
+
+    assert result["status"] == "COMPLETE"
+    assert result["has_more"] is False
+
+
+def test_price_batch_lock_conflict_does_not_run_batch(monkeypatch):
+    monkeypatch.setattr(cron.settings, "CRON_SECRET", "expected")
+    monkeypatch.setattr(cron, "price_collection_advisory_lock", rejected_price_lock)
+    monkeypatch.setattr(
+        cron,
+        "incremental_due_batch_update",
+        lambda *args, **kwargs: pytest.fail("price batch must not run"),
+    )
+
+    result = cron.collect_due_price_batch(
+        cron.PriceBatchRequest(),
+        authorization="Bearer expected",
+        db="db",
+    )
+
+    assert result["status"] == "LOCKED"
+    assert result["processed"] == 0
+    assert result["target_trade_date"] is None
+
+
+def test_price_batch_reports_lock_database_error(monkeypatch):
+    @contextmanager
+    def failed_lock():
+        raise cron.AdvisoryLockError("DATABASE_DIRECT_URL is required")
+        yield
+
+    monkeypatch.setattr(cron.settings, "CRON_SECRET", "expected")
+    monkeypatch.setattr(cron, "price_collection_advisory_lock", failed_lock)
+
+    with pytest.raises(HTTPException) as exc_info:
+        cron.collect_due_price_batch(
+            cron.PriceBatchRequest(),
+            authorization="Bearer expected",
+            db="db",
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Price collection lock unavailable"
+
+
+def test_price_batch_reports_target_trade_date_failure(monkeypatch):
+    monkeypatch.setattr(cron.settings, "CRON_SECRET", "expected")
+    monkeypatch.setattr(cron, "price_collection_advisory_lock", acquired_price_lock)
+    monkeypatch.setattr(
+        cron,
+        "incremental_due_batch_update",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            cron.TargetTradeDateUnavailable("calendar unavailable")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        cron.collect_due_price_batch(
+            cron.PriceBatchRequest(),
+            authorization="Bearer expected",
+            db="db",
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Target trade date unavailable"

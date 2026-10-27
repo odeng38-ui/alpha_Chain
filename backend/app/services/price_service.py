@@ -382,9 +382,12 @@ def incremental_update(
             start = last_date + timedelta(days=1)
 
         if start > collection_end:
-            logger.debug(
-                "[증분] %s — 이미 최신 (last_date=%s)", sec.ticker, last_date
-            )
+            logger.debug("[incremental] %s already current at %s", sec.ticker, last_date)
+            if target_trade_date is not None:
+                error = f"NO_DATA_FOR_TARGET_DATE:{collection_end.isoformat()}"
+                result.errors.append(error)
+                _save_checkpoint(db, sec.id, "FAILED", last_date, error)
+                db.commit()
             continue
 
         try:
@@ -396,7 +399,23 @@ def incremental_update(
             )
 
             inserted_count, skipped_count = _store_price_records(db, sec.id, records)
-            _save_checkpoint(db, sec.id, "SUCCESS", collection_end)
+            latest_record_date = max(
+                (record.trade_date for record in records),
+                default=last_date,
+            )
+            if target_trade_date is not None and not any(
+                record.trade_date == collection_end for record in records
+            ):
+                error = f"NO_DATA_FOR_TARGET_DATE:{collection_end.isoformat()}"
+                result.errors.append(error)
+                _save_checkpoint(db, sec.id, "FAILED", latest_record_date, error)
+            else:
+                _save_checkpoint(
+                    db,
+                    sec.id,
+                    "SUCCESS",
+                    latest_record_date or collection_end,
+                )
             db.commit()
             result.updated_securities += 1
             result.total_inserted += inserted_count
@@ -409,6 +428,12 @@ def incremental_update(
 
         except DataNotFoundError as exc:
             db.rollback()
+            if target_trade_date is not None:
+                error = f"NO_DATA_FOR_TARGET_DATE:{collection_end.isoformat()}"
+                result.errors.append(error)
+                _save_checkpoint(db, sec.id, "FAILED", last_date, error)
+                db.commit()
+                continue
             if last_date is not None:
                 _save_checkpoint(db, sec.id, "SUCCESS", last_date)
                 db.commit()

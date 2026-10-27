@@ -761,3 +761,41 @@ def test_price_collection_coverage_uses_daily_prices_and_active_universe(db, mon
         "failed_count": 1,
         "retry_waiting_count": 1,
     }
+
+
+def test_target_date_without_provider_data_enters_failure_cooldown(db, monkeypatch):
+    security = create_test_security(db, ticker="000030")
+    target = date(2026, 10, 26)
+    monkeypatch.setattr(price_service.settings, "PRICE_FAILURE_RETRY_DAYS", 7)
+
+    first = price_service.incremental_due_batch_update(
+        db,
+        batch_size=1,
+        adapter=MockAdapter([]),
+        target_trade_date=target,
+    )
+    second = price_service.incremental_due_batch_update(
+        db,
+        batch_size=1,
+        adapter=MockAdapter([]),
+        target_trade_date=target,
+    )
+    checkpoint = db.query(CollectionCheckpoint).filter_by(
+        job_name="daily_price",
+        security_id=security.id,
+    ).one()
+
+    assert first["processed"] == 1
+    assert first["remaining"] == 0
+    assert first["has_more"] is False
+    coverage = price_service.price_collection_coverage(
+        db,
+        target_trade_date=target,
+    )
+
+    assert second["processed"] == 0
+    assert second["has_more"] is False
+    assert coverage["missing_count"] == 1
+    assert coverage["retry_waiting_count"] == 1
+    assert checkpoint.status == "FAILED"
+    assert checkpoint.last_error == "NO_DATA_FOR_TARGET_DATE:2026-10-26"

@@ -1,7 +1,8 @@
 import secrets
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -23,7 +24,11 @@ from app.services.news_candidate_validation_service import NewsCandidateValidati
 from app.services.news_classification_service import NewsClassificationService
 from app.services.news_collection_service import NewsCollectionService
 from app.services.news_stock_candidate_service import NewsStockCandidateService
-from app.services.price_service import incremental_due_batch_update
+from app.services.price_service import (
+    TargetTradeDateUnavailable,
+    incremental_due_batch_update,
+    price_collection_coverage,
+)
 from app.services.us_market_event_service import USMarketEventService
 
 router = APIRouter(prefix="/cron", tags=["Cron"])
@@ -33,6 +38,10 @@ PRICE_COLLECTION_ADVISORY_LOCK_KEY = 7_140_022_001
 
 def price_collection_advisory_lock():
     return postgres_advisory_lock(PRICE_COLLECTION_ADVISORY_LOCK_KEY)
+
+
+class PriceBatchRequest(BaseModel):
+    batch_size: int = Field(default=100, ge=1, le=100)
 
 
 def _authorize_cron(authorization: str | None):
@@ -257,6 +266,60 @@ def collect_due_prices(
     )
     _record_cron_success(db, "prices")
     return result
+
+
+@router.post("/prices/batch")
+def collect_due_price_batch(
+    request: PriceBatchRequest,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Run one locked, bounded price-only batch for an external orchestrator."""
+    _authorize_cron(authorization)
+    attempted_after = datetime.utcnow()
+    try:
+        with price_collection_advisory_lock() as lock_acquired:
+            if not lock_acquired:
+                return {
+                    "status": "LOCKED",
+                    "target_trade_date": None,
+                    "processed": 0,
+                    "remaining": None,
+                    "has_more": None,
+                    "active_count": None,
+                    "completed_count": None,
+                    "missing_count": None,
+                    "completion_rate": None,
+                    "failed_count": None,
+                    "retry_waiting_count": None,
+                    "security_ids": [],
+                }
+            result = incremental_due_batch_update(
+                db,
+                batch_size=request.batch_size,
+                attempted_after=attempted_after,
+            )
+            target_trade_date = date.fromisoformat(result["target_trade_date"])
+            coverage = price_collection_coverage(
+                db,
+                target_trade_date=target_trade_date,
+            )
+    except AdvisoryLockError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Price collection lock unavailable",
+        ) from exc
+    except TargetTradeDateUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Target trade date unavailable",
+        ) from exc
+
+    return {
+        **result,
+        **coverage,
+        "status": "COMPLETE" if coverage["missing_count"] == 0 else "PARTIAL",
+    }
 
 
 @router.get("/news")

@@ -1,0 +1,67 @@
+name: Daily price collection
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: Securities per bounded API call (1-100)
+        required: false
+        default: "100"
+      max_calls:
+        description: Maximum total HTTP calls including retries
+        required: false
+        default: "40"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-price-collection
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    if: github.ref == 'refs/heads/phase-d2-daily-prices'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PRICE_COLLECTION_API_URL: ${{ vars.PRICE_COLLECTION_API_URL }}
+      APPROVED_PRICE_COLLECTION_API_URL: https://alphachain-git-phase-d2-daily-prices-juns-projects-2bb09b36.vercel.app/api/v1/cron/prices/batch
+    steps:
+      - name: Check out D-2 branch
+        uses: actions/checkout@v4
+        with:
+          ref: phase-d2-daily-prices
+
+      - name: Validate D-2 branch and Preview URL
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/phase-d2-daily-prices" ]]; then
+            echo "::error::This workflow only runs from the D-2 branch."
+            exit 1
+          fi
+          if [[ "$(git branch --show-current)" != "phase-d2-daily-prices" ]]; then
+            echo "::error::The checked-out branch is not approved."
+            exit 1
+          fi
+          if [[ "${PRICE_COLLECTION_API_URL}" != "${APPROVED_PRICE_COLLECTION_API_URL}" ]]; then
+            echo "::error::The configured Preview API URL is not approved."
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run bounded price collection
+        shell: bash
+        env:
+          PRICE_COLLECTION_CRON_SECRET: ${{ secrets.PRICE_COLLECTION_CRON_SECRET }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: >-
+          python scripts/run_daily_price_collection.py
+          --batch-size "${{ inputs.batch_size }}"
+          --max-calls "${{ inputs.max_calls }}"
+          --request-timeout 60
+          --total-timeout 1800

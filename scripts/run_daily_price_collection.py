@@ -33,6 +33,7 @@ REQUIRED_RESPONSE_FIELDS = {
     "completion_rate",
     "failed_count",
     "retry_waiting_count",
+    "security_ids",
 }
 
 
@@ -217,6 +218,12 @@ def validate_response(response: dict[str, Any]) -> None:
         raise ResponseValidationError("API response field completion_rate must be 0-100")
     if response["has_more"] is not None and not isinstance(response["has_more"], bool):
         raise ResponseValidationError("API response field has_more must be boolean")
+    security_ids = response["security_ids"]
+    if not isinstance(security_ids, list) or any(
+        not isinstance(security_id, int) or isinstance(security_id, bool)
+        for security_id in security_ids
+    ):
+        raise ResponseValidationError("API response field security_ids must be an integer array")
 
 
 def _fingerprint(response: dict[str, Any]) -> tuple[Any, ...]:
@@ -313,6 +320,7 @@ def run_collection(
             f"calls={calls} processed={response['processed']} "
             f"remaining={response['remaining']} missing={response['missing_count']} "
             f"completion={response['completion_rate']}%"
+            f" attempted_security_ids={response['security_ids']}"
         )
         if response["status"] == "COMPLETE" and response["missing_count"] == 0:
             logger("COMPLETE: missing=0")

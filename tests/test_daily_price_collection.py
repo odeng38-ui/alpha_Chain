@@ -15,11 +15,12 @@ from scripts.run_daily_price_collection import (
     decode_response,
     post_batch,
     run_collection,
+    validate_response,
 )
 
 
 def response(*, status="PARTIAL", processed=100, remaining=1, has_more=True,
-             active=2688, completed=100, missing=2588):
+             active=2688, completed=100, missing=2588, security_ids=None):
     return {
         "status": status,
         "target_trade_date": "2026-10-27",
@@ -32,6 +33,9 @@ def response(*, status="PARTIAL", processed=100, remaining=1, has_more=True,
         "completion_rate": None if completed is None else round(completed / active * 100, 2),
         "failed_count": 0,
         "retry_waiting_count": 0,
+        "security_ids": (
+            list(range(1, processed + 1)) if security_ids is None else security_ids
+        ),
     }
 
 
@@ -127,6 +131,35 @@ def test_invalid_json_is_rejected():
     with pytest.raises(ResponseValidationError, match="invalid JSON"):
         decode_response(b"not-json")
 
+
+@pytest.mark.parametrize(
+    "security_ids",
+    [[True], ["1"], [1, False], {"security_id": 1}],
+)
+def test_security_ids_must_be_an_integer_array(security_ids):
+    with pytest.raises(ResponseValidationError, match="integer array"):
+        validate_response(response(security_ids=security_ids))
+
+
+def test_progress_log_labels_security_ids_as_attempted():
+    logs = []
+
+    result = run_collection(
+        config(),
+        transport=lambda cfg: response(
+            status="COMPLETE",
+            processed=1,
+            remaining=0,
+            has_more=False,
+            completed=2688,
+            missing=0,
+            security_ids=[321],
+        ),
+        logger=logs.append,
+    )
+
+    assert result.outcome is Outcome.COMPLETE
+    assert "attempted_security_ids=[321]" in "\n".join(logs)
 
 def test_identical_response_repetition_is_detected():
     repeated = response(completed=100, missing=2588, remaining=25)

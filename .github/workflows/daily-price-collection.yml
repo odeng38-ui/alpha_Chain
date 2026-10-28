@@ -26,11 +26,13 @@ concurrency:
 
 jobs:
   collect:
+    if: github.ref == 'refs/heads/phase-d2-daily-prices'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
       PRICE_COLLECTION_API_URL: ${{ vars.PRICE_COLLECTION_API_URL }}
       PRICE_COLLECTION_CRON_SECRET: ${{ secrets.PRICE_COLLECTION_CRON_SECRET }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

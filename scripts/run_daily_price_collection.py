@@ -13,9 +13,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+from urllib.parse import urlsplit
 
 RETRYABLE_HTTP_STATUSES = {429, 502, 503, 504}
 AUTH_HTTP_STATUSES = {401, 403}
+D2_PREVIEW_API_HOST = (
+    "alphachain-git-phase-d2-daily-prices-juns-projects-2bb09b36.vercel.app"
+)
+D2_PREVIEW_API_PATH = "/api/v1/cron/prices/batch"
 REQUIRED_RESPONSE_FIELDS = {
     "status",
     "target_trade_date",
@@ -76,12 +81,14 @@ class Config:
     max_locked_retries: int = 3
     base_backoff: float = 2.0
     max_stalled_responses: int = 2
+    bypass_secret: str = ""
 
     def validate(self) -> None:
         if not self.api_url:
             raise CollectionError("API URL is required")
         if not self.token:
             raise CollectionError("API token is required")
+        validate_api_url(self.api_url)
         if not 1 <= self.batch_size <= 100:
             raise CollectionError("batch size must be between 1 and 100")
         if self.max_calls < 1:
@@ -89,6 +96,34 @@ class Config:
         if self.request_timeout <= 0 or self.total_timeout <= 0:
             raise CollectionError("timeouts must be positive")
 
+
+def validate_api_url(api_url: str) -> None:
+    try:
+        parsed_url = urlsplit(api_url)
+        port = parsed_url.port
+    except ValueError as exc:
+        raise CollectionError("D-2 Preview API URL is invalid") from exc
+    if (
+        parsed_url.scheme != "https"
+        or parsed_url.hostname != D2_PREVIEW_API_HOST
+        or parsed_url.path != D2_PREVIEW_API_PATH
+        or port not in {None, 443}
+        or parsed_url.username is not None
+        or parsed_url.password is not None
+        or parsed_url.query
+        or parsed_url.fragment
+    ):
+        raise CollectionError("D-2 Preview API URL is not approved")
+
+
+class ApprovedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        parsed_url = urlsplit(new_url)
+        if parsed_url.scheme != "https" or parsed_url.hostname != D2_PREVIEW_API_HOST:
+            raise CollectionError("redirect target is not approved")
+        return super().redirect_request(
+            request, file_pointer, code, message, headers, new_url
+        )
 
 @dataclass(frozen=True)
 class RunResult:
@@ -118,20 +153,25 @@ def decode_response(payload: bytes) -> dict[str, Any]:
 
 
 def post_batch(config: Config) -> dict[str, Any]:
+    config.validate()
     body = json.dumps({"batch_size": config.batch_size}).encode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {config.token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "alpha-chain-price-orchestrator/1.0",
+    }
+    if config.bypass_secret:
+        headers["x-vercel-protection-bypass"] = config.bypass_secret
     request = urllib.request.Request(
         config.api_url,
         data=body,
         method="POST",
-        headers={
-            "Authorization": f"Bearer {config.token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": "alpha-chain-price-orchestrator/1.0",
-        },
+        headers=headers,
     )
+    opener = urllib.request.build_opener(ApprovedRedirectHandler())
     try:
-        with urllib.request.urlopen(request, timeout=config.request_timeout) as response:
+        with opener.open(request, timeout=config.request_timeout) as response:
             return decode_response(response.read())
     except urllib.error.HTTPError as exc:
         if exc.code in AUTH_HTTP_STATUSES:
@@ -305,6 +345,7 @@ def main(argv: list[str] | None = None) -> int:
     config = Config(
         api_url=args.api_url,
         token=args.token,
+        bypass_secret=os.getenv("VERCEL_AUTOMATION_BYPASS_SECRET", ""),
         batch_size=args.batch_size,
         max_calls=args.max_calls,
         request_timeout=args.request_timeout,

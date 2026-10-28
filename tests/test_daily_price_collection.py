@@ -1,12 +1,19 @@
+import json
+from pathlib import Path
+from unittest.mock import Mock
+
 import pytest
 
 from scripts.run_daily_price_collection import (
+    ApprovedRedirectHandler,
     AuthenticationError,
+    CollectionError,
     Config,
     Outcome,
     ResponseValidationError,
     RetryableHttpError,
     decode_response,
+    post_batch,
     run_collection,
 )
 
@@ -29,7 +36,13 @@ def response(*, status="PARTIAL", processed=100, remaining=1, has_more=True,
 
 
 def config(**overrides):
-    values = {"api_url": "https://example.invalid/api/v1/cron/prices/batch", "token": "top-secret"}
+    values = {
+        "api_url": (
+            "https://alphachain-git-phase-d2-daily-prices-"
+            "juns-projects-2bb09b36.vercel.app/api/v1/cron/prices/batch"
+        ),
+        "token": "top-secret",
+    }
     values.update(overrides)
     return Config(**values)
 
@@ -158,14 +171,16 @@ def test_secret_is_never_written_to_logs():
     logs = []
 
     result = run_collection(
-        config(token="never-log-this"),
+        config(token="never-log-this", bypass_secret="never-log-bypass"),
         transport=lambda cfg: response(status="COMPLETE", processed=1, remaining=0,
                                        has_more=False, completed=2688, missing=0),
         logger=logs.append,
     )
 
     assert result.outcome is Outcome.COMPLETE
-    assert "never-log-this" not in "\n".join(logs)
+    output = "\n".join(logs)
+    assert "never-log-this" not in output
+    assert "never-log-bypass" not in output
 
 
 def test_malformed_response_fails_explicitly():
@@ -190,3 +205,104 @@ def test_persistent_lock_returns_distinct_locked_exit():
     assert result.outcome is Outcome.LOCKED
     assert result.exit_code == 3
     assert result.calls == 2
+
+
+class StubResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+    def read(self):
+        return json.dumps(
+            response(
+                status="COMPLETE",
+                processed=1,
+                remaining=0,
+                has_more=False,
+                completed=2688,
+                missing=0,
+            )
+        ).encode("utf-8")
+
+
+def test_post_batch_sends_bearer_and_bypass_headers(monkeypatch):
+    opener = Mock()
+    opener.open.return_value = StubResponse()
+    monkeypatch.setattr(
+        "scripts.run_daily_price_collection.urllib.request.build_opener",
+        lambda handler: opener,
+    )
+
+    post_batch(config(token="cron-secret", bypass_secret="bypass-secret"))
+
+    request = opener.open.call_args.args[0]
+    assert request.get_header("Authorization") == "Bearer cron-secret"
+    assert request.get_header("X-vercel-protection-bypass") == "bypass-secret"
+
+
+def test_post_batch_without_bypass_secret_keeps_existing_auth(monkeypatch):
+    opener = Mock()
+    opener.open.return_value = StubResponse()
+    monkeypatch.setattr(
+        "scripts.run_daily_price_collection.urllib.request.build_opener",
+        lambda handler: opener,
+    )
+
+    post_batch(config(token="cron-secret"))
+
+    request = opener.open.call_args.args[0]
+    assert request.get_header("Authorization") == "Bearer cron-secret"
+    assert request.get_header("X-vercel-protection-bypass") is None
+
+
+@pytest.mark.parametrize(
+    "api_url",
+    [
+        "http://alphachain-git-phase-d2-daily-prices-juns-projects-2bb09b36.vercel.app/api/v1/cron/prices/batch",
+        "https://alphachain.vercel.app/api/v1/cron/prices/batch",
+        "https://alphachain-git-phase-d2-daily-prices-juns-projects-2bb09b36.vercel.app/api/v1/cron/other",
+    ],
+)
+def test_unapproved_api_url_is_rejected_before_http_request(monkeypatch, api_url):
+    build_opener = Mock()
+    monkeypatch.setattr(
+        "scripts.run_daily_price_collection.urllib.request.build_opener",
+        build_opener,
+    )
+
+    with pytest.raises(CollectionError, match="not approved"):
+        post_batch(config(api_url=api_url, bypass_secret="bypass-secret"))
+
+    build_opener.assert_not_called()
+
+
+def test_cross_host_redirect_is_rejected():
+    handler = ApprovedRedirectHandler()
+
+    with pytest.raises(CollectionError, match="redirect target is not approved"):
+        handler.redirect_request(
+            None,
+            None,
+            307,
+            "Temporary Redirect",
+            {},
+            "https://example.invalid/api/v1/cron/prices/batch",
+        )
+
+
+def test_workflow_limits_execution_to_d2_branch_and_passes_bypass_secret():
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github"
+        / "workflows"
+        / "daily-price-collection.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "if: github.ref == 'refs/heads/phase-d2-daily-prices'" in workflow
+    assert (
+        "VERCEL_AUTOMATION_BYPASS_SECRET: "
+        "${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}"
+    ) in workflow
+    assert "schedule:" not in workflow

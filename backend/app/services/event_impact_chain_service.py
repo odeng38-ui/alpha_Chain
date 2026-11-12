@@ -30,7 +30,7 @@ from app.models.schema import (
     ScoreSnapshot,
     Security,
 )
-from app.services.dart_service import classify_event as classify_dart_event
+from app.services.dart_service import classify_ef_event as classify_dart_event
 from app.services.event_batch_runner import supply_contract_correction
 from app.services.event_watch_pipeline import EventWatchPipeline
 

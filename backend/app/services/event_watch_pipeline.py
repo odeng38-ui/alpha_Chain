@@ -26,7 +26,7 @@ from typing import Any, Mapping, Sequence
 from sqlalchemy.orm import Session
 
 from app.services.dart_service import _base_report_name
-from app.services.dart_service import classify_event as classify_dart_event
+from app.services.dart_service import classify_ef_event as classify_dart_event
 from app.services.event_inbox_service import (
     CompanyIdentifier,
     EventCandidate,

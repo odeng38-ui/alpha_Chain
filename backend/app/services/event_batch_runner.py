@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 from sqlalchemy.orm import Session
 
 from app.models.schema import DisclosureEvent, Filing
-from app.services.dart_service import classify_event as classify_dart_event
+from app.services.dart_service import classify_ef_event as classify_dart_event
 from app.services.event_checkpoint_service import EventCheckpointService
 
 logger = logging.getLogger(__name__)

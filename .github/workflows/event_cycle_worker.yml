@@ -1,0 +1,93 @@
+name: EF-14 Event Cycle Worker
+
+# Automatic scheduling is intentionally DISABLED until explicit approval.
+# Future 30-minute schedule after Neon migration & manual validation:
+#   schedule:
+#     - cron: "*/30 * * * *"
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Execution mode (read_only_plan is default; execute requires repository gate)"
+        required: true
+        type: choice
+        default: "read_only_plan"
+        options:
+          - read_only_plan
+          - execute
+      max_items:
+        description: "Max actionable items per cycle (1-5)"
+        required: false
+        default: "5"
+      max_api_calls:
+        description: "Max OpenDART API calls per cycle (1-10)"
+        required: false
+        default: "10"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ef14-event-cycle-worker
+  cancel-in-progress: false
+
+jobs:
+  run_cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ALLOW_CLOUD_NEON_DB: "true"
+      APPROVED_NEON_HOST: ${{ vars.APPROVED_NEON_HOST }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      ENABLE_EVENT_CYCLE_WRITE: ${{ vars.ENABLE_EVENT_CYCLE_WRITE }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Validate required secrets and write gate
+        shell: bash
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Missing required secret: DATABASE_URL"
+            exit 1
+          fi
+          if [ "${{ inputs.mode }}" = "execute" ]; then
+            if [ "$ENABLE_EVENT_CYCLE_WRITE" != "true" ]; then
+              echo "::error::Database write execution is blocked until vars.ENABLE_EVENT_CYCLE_WRITE is set to 'true'."
+              exit 1
+            fi
+            if [ -z "$DART_API_KEY" ]; then
+              echo "::error::Missing required secret: DART_API_KEY for execute mode"
+              exit 1
+            fi
+          fi
+
+      - name: Install backend dependencies
+        shell: bash
+        run: pip install --no-cache-dir -r backend/requirements.txt
+
+      - name: Run Event Cycle Worker (Read-Only Plan or Bounded Execute)
+        shell: bash
+        working-directory: backend
+        run: |
+          EXEC_FLAG=""
+          if [ "${{ inputs.mode }}" = "execute" ]; then
+            EXEC_FLAG="--execute"
+          fi
+          python scripts/run_event_cycle.py \
+            --cloud \
+            --scope-file app/data/event_dart_initial_scope.json \
+            --max-items "${{ inputs.max_items }}" \
+            --max-api-calls "${{ inputs.max_api_calls }}" \
+            $EXEC_FLAG
+

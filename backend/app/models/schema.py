@@ -1,22 +1,30 @@
-from datetime import datetime
+import hashlib
+import json
+import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
     PrimaryKeyConstraint,
     String,
     Text,
+    UniqueConstraint,
+    event,
 )
 from sqlalchemy.orm import relationship as orm_relationship
+from sqlalchemy.types import TypeDecorator
 
 from app.db.session import Base
 
@@ -26,6 +34,11 @@ class Company(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     corp_code = Column(String(8), unique=True, nullable=True, index=True, comment="DART 고유번호")
+    country_code = Column(String(2), nullable=True, index=True)
+    legal_name = Column(String(300), nullable=True)
+    normalized_name = Column(String(300), nullable=True, index=True)
+    entity_type = Column(String(30), nullable=True)
+    verification_status = Column(String(20), nullable=True, index=True)
 
     name = Column(String(200), nullable=False, index=True, comment="법인명/기업명")
     status = Column(String(20), default="ACTIVE", comment="상태: ACTIVE, DELISTED, MERGED")
@@ -263,6 +276,7 @@ class RelationshipEvidence(Base):
     excerpt = Column(Text, nullable=False, comment="관계 증거 원문 발췌 텍스트")
     location = Column(String(200), nullable=True, comment="문서 내 위치 (표/단락)")
     published_at = Column(DateTime, nullable=False)
+    verification_status = Column(String(20), nullable=True, comment="NULL/proposed = unverified; verified requires explicit review")
     extractor_version = Column(String(50), default="rule_v1")
 
     # Relationships
@@ -399,6 +413,10 @@ class GlobalEvent(Base):
     raw_hash = Column(String(64), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # S2-B2 extensions (nullable for legacy compatibility)
+    verification_status = Column(String(20), nullable=True, index=True)
+    collected_at = Column(DateTime(timezone=True), nullable=True)
+    event_schema_version = Column(String(20), nullable=True)
 
 class EventImpactCandidate(Base):
     __tablename__ = "event_impact_candidate"
@@ -489,3 +507,60 @@ class NewsCandidateValidationRun(Base):
     as_of = Column(Date, nullable=False)
     report = Column(JSON, nullable=False)
     evaluated_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+# S2-B2 -----------------------------------------------------------------------
+
+class GlobalEventEvidence(Base):
+    __tablename__ = 'global_event_evidence'
+    __table_args__ = (
+        Index('ix_gee_event_status', 'event_id', 'verification_status'),
+        Index('ix_gee_published_at', 'published_at'),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(Integer, ForeignKey('global_event.id'), nullable=False, index=True)
+    evidence_type = Column(String(20), nullable=False)
+    source_document = Column(String(500), nullable=True)
+    source_url = Column(String(2000), nullable=True)
+    location = Column(String(300), nullable=True)
+    excerpt = Column(Text, nullable=True)
+    published_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    collected_at = Column(DateTime(timezone=True), nullable=False)
+    extracted_facts = Column(JSON, nullable=False, default=dict)
+    interpretations = Column(JSON, nullable=False, default=dict)
+    verification_status = Column(String(20), nullable=False, default='proposed', index=True)
+    evidence_hash = Column(String(64), nullable=False, unique=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    event = orm_relationship('GlobalEvent', foreign_keys=[event_id])
+    company_links = orm_relationship(
+        'EventCompanyLink', back_populates='evidence',
+        foreign_keys='EventCompanyLink.evidence_id',
+    )
+
+
+class EventCompanyLink(Base):
+    __tablename__ = 'event_company_link'
+    __table_args__ = (
+        Index('ix_ecl_event_company', 'event_id', 'company_id'),
+        Index('ix_ecl_event_role', 'event_id', 'role'),
+        Index('uq_ecl_event_company_role', 'event_id', 'company_id', 'role', unique=True),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(Integer, ForeignKey('global_event.id'), nullable=False, index=True)
+    company_id = Column(Integer, ForeignKey('company.id'), nullable=False, index=True)
+    role = Column(String(30), nullable=False)
+    evidence_id = Column(Integer, ForeignKey('global_event_evidence.id'), nullable=False, index=True)
+    verification_status = Column(String(20), nullable=False, default='proposed', index=True)
+    confidence = Column(Float, nullable=True)
+    valid_from = Column(Date, nullable=True)
+    valid_to = Column(Date, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    event = orm_relationship('GlobalEvent', foreign_keys=[event_id])
+    company = orm_relationship('Company', foreign_keys=[company_id])
+    evidence = orm_relationship(
+        'GlobalEventEvidence', back_populates='company_links',
+        foreign_keys=[evidence_id],
+    )
+

@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -24,11 +25,11 @@ from sqlalchemy import (
     DateTime,
     Index,
     Integer,
-    JSON,
     String,
     Text,
 )
 from sqlalchemy.orm import Session
+
 from app.db.session import Base
 
 logger = logging.getLogger(__name__)

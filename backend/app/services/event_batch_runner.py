@@ -19,12 +19,11 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 from sqlalchemy.orm import Session
-from sqlalchemy import text
 
-from app.models.schema import Company, DisclosureEvent, Filing, Security
+from app.models.schema import DisclosureEvent, Filing
 from app.services.dart_service import classify_event as classify_dart_event
 from app.services.event_checkpoint_service import EventCheckpointService
 

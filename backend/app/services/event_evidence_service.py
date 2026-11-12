@@ -27,7 +27,6 @@ from app.models.schema import (
 )
 from app.services.identifier_service import (
     EXCLUSIVE_IDENTIFIER_SOURCES,
-    IdentifierConflictError,
 )
 
 # ---------------------------------------------------------------------------

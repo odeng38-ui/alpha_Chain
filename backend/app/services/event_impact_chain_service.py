@@ -9,17 +9,14 @@ Discovers the real propagation path from:
 Strictly read-only; queries only existing DB columns and compliant offline documents.
 """
 from __future__ import annotations
-from app.services.dart_service import classify_event as classify_dart_event
-from app.services.event_batch_runner import supply_contract_correction
-from app.services.event_watch_pipeline import EventWatchPipeline
 
 import json
-from datetime import datetime, timezone, date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import or_, text
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.schema import (
@@ -33,6 +30,9 @@ from app.models.schema import (
     ScoreSnapshot,
     Security,
 )
+from app.services.dart_service import classify_event as classify_dart_event
+from app.services.event_batch_runner import supply_contract_correction
+from app.services.event_watch_pipeline import EventWatchPipeline
 
 
 def _to_float(val: Decimal | int | float | None) -> float | int | None:

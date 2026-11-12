@@ -1,30 +1,22 @@
-import hashlib
-import json
-import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
-    CheckConstraint,
     Column,
     Date,
     DateTime,
     Float,
     ForeignKey,
-    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
     PrimaryKeyConstraint,
     String,
     Text,
-    UniqueConstraint,
-    event,
 )
 from sqlalchemy.orm import relationship as orm_relationship
-from sqlalchemy.types import TypeDecorator
 
 from app.db.session import Base
 

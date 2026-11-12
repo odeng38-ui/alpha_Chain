@@ -20,14 +20,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from typing import Any, Sequence
 
 from sqlalchemy.orm import Session
 
 from app.services.event_batch_runner import BatchExecutionReport, EventBatchRunner
 from app.services.event_checkpoint_service import EventCheckpointService
 from app.services.event_watch_pipeline import EventWatchPipeline, EventWatchResult
-from app.adapters.dart_adapter import DartAdapter, DartAuthError, DartRateLimitError
 
 logger = logging.getLogger(__name__)
 

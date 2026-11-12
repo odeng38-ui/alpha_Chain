@@ -1,9 +1,9 @@
 """PostgreSQL authoritative checkpoint; never loads or writes legacy JSON."""
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from sqlalchemy import select
-from app.services.event_checkpoint_service import EventCheckpointService, CheckpointState
-from app.services.event_staging_service import EventStagingItem, EventCycleHistory
+
+from app.services.event_checkpoint_service import CheckpointState, EventCheckpointService
+from app.services.event_staging_service import EventCycleHistory, EventStagingItem
 
 REVIEW_HOLDS = frozenset({"20261104000325", "20261110000262"})
 

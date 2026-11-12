@@ -1,12 +1,13 @@
 """Single-cycle composition of existing DART, watch, scheduler and PG services."""
-from datetime import date, datetime, time, timezone, timedelta
-from sqlalchemy import select
+from datetime import date, datetime, time, timedelta, timezone
+
 from app.adapters.dart_adapter import DartAdapter, DartAuthError, DartRateLimitError
 from app.models.schema import Company, Filing
 from app.services.event_auto_scheduler import EventAutoScheduler
-from app.services.event_postgres_checkpoint import PostgresEventCheckpoint, REVIEW_HOLDS
+from app.services.event_postgres_checkpoint import REVIEW_HOLDS, PostgresEventCheckpoint
 from app.services.event_staging_service import EventCycleHistory, EventStagingService
 from app.services.event_watch_pipeline import EventWatchPipeline
+
 
 class ApiBudgetExceeded(RuntimeError):
     pass

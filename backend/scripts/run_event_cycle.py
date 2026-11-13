@@ -141,6 +141,8 @@ def main(argv=None):
     if env_mode == "cloud":
         # Enforce full TLS server certificate & hostname verification in cloud mode
         connect_args["sslmode"] = "verify-full"
+        # Trust the runner OS CA bundle while retaining certificate and hostname verification.
+        connect_args["sslrootcert"] = "system"
         # Set statement timeout & read-only explicitly after connect to support pooled/unpooled Neon
         engine = create_engine(url.set(drivername="postgresql+psycopg2"), connect_args=connect_args)
     else:

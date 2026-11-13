@@ -10,6 +10,44 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 ALLOWED_CLOUD_SSLMODES = frozenset({"require", "verify-ca", "verify-full"})
+
+
+def classify_connection_failure(exc):
+    """Return a fixed diagnostic label; never expose an exception or URL."""
+    from sqlalchemy.exc import OperationalError
+
+    if not isinstance(exc, OperationalError):
+        return None
+
+    orig = getattr(exc, "orig", None)
+    code = getattr(orig, "pgcode", None) or getattr(orig, "sqlstate", None)
+    if code in {"28P01", "28000"}:
+        return "authentication"
+    if code == "3D000":
+        return "database_not_found"
+
+    # psycopg2 connection exceptions often have no SQLSTATE. Inspect locally,
+    # but output only a constant label: no error messages, hosts, or credentials.
+    message = str(orig if orig is not None else exc).lower()
+    if any(token in message for token in ("certificate verify failed", "certificate verification failed",
+                                           "root certificate", "certificate chain", "server certificate",
+                                           "hostname mismatch", "ssl certificate")):
+        return "tls_certificate"
+    if any(token in message for token in ("could not translate host name", "name or service not known",
+                                           "temporary failure in name resolution", "nodename nor servname")):
+        return "dns_resolution"
+    if any(token in message for token in ("timeout expired", "timed out", "connection timeout")):
+        return "network_timeout"
+    if "connection refused" in message:
+        return "connection_refused"
+    if any(token in message for token in ("network is unreachable", "no route to host")):
+        return "network_unreachable"
+    if any(token in message for token in ("password authentication failed", "authentication failed",
+                                           "no pg_hba.conf entry", "role", "does not exist")):
+        return "authentication"
+    if any(token in message for token in ("ssl", "tls")):
+        return "tls_other"
+    return "unclassified_connection_error"
 DIAGNOSTIC_STAGE = "startup"  # Constant labels only; never include connection details.
 
 
@@ -180,5 +218,9 @@ if __name__ == "__main__":
         detail = {"status": "failed", "error_type": type(exc).__name__, "stage": DIAGNOSTIC_STAGE}
         if isinstance(sqlstate, str) and len(sqlstate) == 5 and sqlstate.isalnum():
             detail["sqlstate"] = sqlstate
+        if DIAGNOSTIC_STAGE == "db_connection":
+            category = classify_connection_failure(exc)
+            if category:
+                detail["connection_failure"] = category
         print(json.dumps(detail), file=sys.stderr)
         raise SystemExit(1)

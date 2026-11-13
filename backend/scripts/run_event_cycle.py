@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 ALLOWED_CLOUD_SSLMODES = frozenset({"require", "verify-ca", "verify-full"})
+DIAGNOSTIC_STAGE = "startup"  # Constant labels only; never include connection details.
 
 
 def validate_database_url(raw_url: str, *, allow_cloud: bool = False, approved_cloud_host: str | None = None):
@@ -50,6 +51,8 @@ def validate_database_url(raw_url: str, *, allow_cloud: bool = False, approved_c
 
 
 def main(argv=None):
+    global DIAGNOSTIC_STAGE
+    DIAGNOSTIC_STAGE = "startup"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", required=False, help="Optional .env file path; falls back to process environment")
     parser.add_argument("--scope-file", required=True, help="JSON array of the existing 10 DART corp_codes")
@@ -74,6 +77,7 @@ def main(argv=None):
     allow_cloud = args.cloud or (os.environ.get("ALLOW_CLOUD_NEON_DB", "").lower() == "true")
     approved_host = values.get("APPROVED_NEON_HOST") or os.environ.get("APPROVED_NEON_HOST")
 
+    DIAGNOSTIC_STAGE = "validate_db_config"
     url, env_mode = validate_database_url(
         raw_db_url,
         allow_cloud=allow_cloud,
@@ -108,19 +112,23 @@ def main(argv=None):
         engine = create_engine(url.set(drivername="postgresql+psycopg2"), connect_args=connect_args)
 
     try:
+        DIAGNOSTIC_STAGE = "db_connection"
         with Session(engine) as db:
             if env_mode == "cloud":
                 if not args.execute:
                     db.execute(text("SET TRANSACTION READ ONLY"))
                 db.execute(text("SET statement_timeout = '30000'"))
-            tables = set(inspect(engine).get_table_names())
+            DIAGNOSTIC_STAGE = "schema_inspection"
+            tables = set(inspect(db.connection()).get_table_names())
             if not {"event_staging_item", "event_cycle_history"}.issubset(tables):
                 raise ValueError("Existing staging schema is required; migrations are never automatic")
             if not args.execute:
+                DIAGNOSTIC_STAGE = "read_only_check"
                 if env_mode == "cloud":
                     assert db.execute(text("SHOW transaction_read_only")).scalar() == "on"
                 else:
                     assert db.execute(text("SHOW transaction_read_only")).scalar() == "on"
+                DIAGNOSTIC_STAGE = "checkpoint_summary"
                 cp = PostgresEventCheckpoint(db, readonly=True)
                 print(
                     json.dumps(
@@ -137,6 +145,7 @@ def main(argv=None):
                     )
                 )
                 return 0
+            DIAGNOSTIC_STAGE = "execute_cycle"
             key = values.get("DART_API_KEY") or os.environ.get("DART_API_KEY")
             if not key:
                 raise ValueError("DART_API_KEY is required")
@@ -165,5 +174,11 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Exception as exc:
         # Do not log connection strings, request query strings, or env file contents.
-        print(json.dumps({"status": "failed", "error_type": type(exc).__name__}), file=sys.stderr)
+        orig = getattr(exc, "orig", None)
+        sqlstate = getattr(orig, "pgcode", None) or getattr(orig, "sqlstate", None)
+        # Whitelist diagnostic metadata; never print exception messages or connection URLs.
+        detail = {"status": "failed", "error_type": type(exc).__name__, "stage": DIAGNOSTIC_STAGE}
+        if isinstance(sqlstate, str) and len(sqlstate) == 5 and sqlstate.isalnum():
+            detail["sqlstate"] = sqlstate
+        print(json.dumps(detail), file=sys.stderr)
         raise SystemExit(1)

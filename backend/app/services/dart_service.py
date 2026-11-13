@@ -19,8 +19,11 @@ from app.models.schema import (
 PARSER_VERSION = "dart_v1"
 REPORT_CODES = {"11013": "Q1", "11012": "H1", "11014": "Q3", "11011": "FY"}
 EVENT_RULES = (
-    ("SUPPLY_CONTRACT", re.compile(r"공급계약|판매계약")),
+    ("SUPPLY_CONTRACT", re.compile(r"공급계약|판매계약|단일판매")),
     ("FACILITY_INVESTMENT", re.compile(r"신규시설투자|시설투자")),
+    ("EARNINGS_ANNOUNCEMENT", re.compile(r"영업\(잠정\)실적|잠정실적|실적발표")),
+    ("SHARE_RETIREMENT", re.compile(r"주식소각")),
+    ("DIVIDEND", re.compile(r"현금.*배당|현물.*배당|분기배당")),
     ("CAPITAL_INCREASE", re.compile(r"유상증자")),
     ("CONVERTIBLE_BOND", re.compile(r"전환사채")),
     ("BOND_WITH_WARRANT", re.compile(r"신주인수권부사채")),
@@ -33,6 +36,14 @@ def classify_event(report_name: str) -> Optional[str]:
         if pattern.search(report_name):
             return event_type
     return None
+
+
+def classify_ef_event(report_name: str) -> Optional[str]:
+    """Event-First classification preserving legacy classify_event behavior."""
+    kind = classify_event(report_name)
+    if kind == "TREASURY_STOCK" and "자기주식취득" in report_name:
+        return "SHARE_BUYBACK"
+    return kind
 
 
 def _base_report_name(name: str) -> str:

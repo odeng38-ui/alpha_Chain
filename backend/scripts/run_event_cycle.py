@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import ssl
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -10,6 +11,14 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 ALLOWED_CLOUD_SSLMODES = frozenset({"require", "verify-ca", "verify-full"})
+
+
+def cloud_root_certificate():
+    """Use an explicit OS CA file, independent of bundled libpq SSL defaults."""
+    cafile = ssl.get_default_verify_paths().cafile
+    if not cafile or not Path(cafile).is_file():
+        raise ValueError("Cloud TLS requires an existing OS CA certificate bundle")
+    return cafile
 
 
 def classify_connection_failure(exc):
@@ -141,8 +150,9 @@ def main(argv=None):
     if env_mode == "cloud":
         # Enforce full TLS server certificate & hostname verification in cloud mode
         connect_args["sslmode"] = "verify-full"
-        # Trust the runner OS CA bundle while retaining certificate and hostname verification.
-        connect_args["sslrootcert"] = "system"
+        # psycopg2-binary bundles libpq/OpenSSL, whose default CA paths can differ
+        # from the runner OS. Pass the actual CA file instead of the magic "system" value.
+        connect_args["sslrootcert"] = cloud_root_certificate()
         # Set statement timeout & read-only explicitly after connect to support pooled/unpooled Neon
         engine = create_engine(url.set(drivername="postgresql+psycopg2"), connect_args=connect_args)
     else:

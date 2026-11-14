@@ -74,7 +74,7 @@ jobs:
 
       - name: Install backend dependencies
         shell: bash
-        run: pip install --no-cache-dir -r backend/requirements.txt
+        run: pip install -r backend/requirements.txt
 
       - name: Run Event Cycle Worker (Read-Only Plan or Bounded Execute)
         shell: bash

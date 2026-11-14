@@ -4,6 +4,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from app.adapters.dart_adapter import DartAdapter, DartAuthError, DartRateLimitError
 from app.models.schema import Company, Filing
 from app.services.event_auto_scheduler import EventAutoScheduler
+from app.services.event_discovery_policy import discovery_counts, discovery_decision
 from app.services.event_postgres_checkpoint import REVIEW_HOLDS, PostgresEventCheckpoint
 from app.services.event_staging_service import EventCycleHistory, EventStagingService
 from app.services.event_watch_pipeline import EventWatchPipeline
@@ -88,6 +89,8 @@ def run_once(db, *, corp_codes, adapter, end_date, start_date=None, cycle_id=Non
             db.add(hist)
             db.commit()
             discovered = 0
+            decisions = []
+            eligible_before_processing = 0
             poll_status = "partial"
             error = None
             batch = None
@@ -117,16 +120,20 @@ def run_once(db, *, corp_codes, adapter, end_date, start_date=None, cycle_id=Non
                         correction, original = resolve_official_correction(db, row, companies[code].id)
                         # Date-only DART list metadata: conservative end-of-day KST, not an invented publication time.
                         published = datetime.combine(datetime.strptime(row["rcept_dt"], "%Y%m%d").date(), time(23, 59, 59), tzinfo=timezone(timedelta(hours=9))).isoformat()
-                        actionable = bool(out) and (not correction or original is not None)
-                        cp.register_discovered_filings([{"rcept_no": rcp, "company_id": companies[code].id, "company_name": companies[code].name, "corp_code": code, "title": title, "published_at": published, "event_type": out.get("event_type", "CORPORATE_FILING") if out else "CORPORATE_FILING", "is_actionable": actionable, "is_correction": correction, "document_version": "2" if correction else "1", "status": "pending"}])
+                        decision = discovery_decision(
+                            title, router_ready=bool(out), is_correction=correction,
+                            review_hold=rcp in REVIEW_HOLDS,
+                        )
+                        actionable = decision["is_actionable"]
+                        cp.register_discovered_filings([{"rcept_no": rcp, "company_id": companies[code].id, "company_name": companies[code].name, "corp_code": code, "title": title, "published_at": published, "event_type": out.get("event_type", "CORPORATE_FILING") if out else "CORPORATE_FILING", "is_actionable": actionable, "is_correction": correction, "document_version": "2" if correction else "1", "status": decision["status"]}])
                         item = cp.state.items[rcp]
                         item["correction_of"] = original
                         from app.services.event_staging_service import EventStagingItem
                         db.get(EventStagingItem, rcp).correction_of = original
-                        if not actionable:
-                            item["last_error"] = "review_required: source or correction needs review"
+                        item["last_error"] = decision["last_error"]
                         cp.save_checkpoint()
                         discovered += 1
+                        decisions.append(decision)
                     if page >= total:
                         progress["company_index"] += 1
                         progress["page"] = 1
@@ -146,6 +153,9 @@ def run_once(db, *, corp_codes, adapter, end_date, start_date=None, cycle_id=Non
                 db.commit()
                 cp.load_database()
                 targets = [x["rcept_no"] for x in cp.state.items.values() if x["corp_code"] in scope]
+                eligible_before_processing = len(cp.get_next_batch_to_process(
+                    max_items=len(targets), target_rcept_nos=targets,
+                ))
                 result = EventAutoScheduler(checkpoint_service=cp, default_max_items=max_items, default_max_api_calls=max_api_calls - adapter.calls).run_cycle(db, max_items=max_items, target_rcept_nos=targets, dry_run=False)
                 batch = result.batch_report
                 if result.status != "completed":
@@ -162,6 +172,13 @@ def run_once(db, *, corp_codes, adapter, end_date, start_date=None, cycle_id=Non
                 poll_status = "error"
                 final_status = "failed"
             cp.load_database()
+            diagnostics = {
+                "new_items": discovery_counts(decisions),
+                "eligible_before_processing": eligible_before_processing,
+                "batch_skipped": batch.skipped_count if batch else 0,
+                "batch_failed": batch.failed_count if batch else 0,
+            }
+            metadata = {**metadata, "classification_summary": diagnostics}
             cp.coverage = metadata
             cp._recompute_high_water_mark()
             hist = db.query(EventCycleHistory).filter_by(cycle_id=cycle_id).one()
@@ -179,7 +196,7 @@ def run_once(db, *, corp_codes, adapter, end_date, start_date=None, cycle_id=Non
             hist.error_message = error
             hist.metadata_json = dict(metadata)
             db.commit()
-            return {"cycle_id": cycle_id, "status": final_status, "poll_status": poll_status, "discovered": discovered, "processed": hist.items_processed, "api_calls": adapter.calls, "is_page_complete": metadata["is_page_complete"]}
+            return {"cycle_id": cycle_id, "status": final_status, "poll_status": poll_status, "discovered": discovered, "processed": hist.items_processed, "api_calls": adapter.calls, "is_page_complete": metadata["is_page_complete"], "classification_summary": diagnostics}
     except TimeoutError:
         # Append a separate audit only; never touch the lock owner's history/state.
         db.rollback()
@@ -187,3 +204,4 @@ def run_once(db, *, corp_codes, adapter, end_date, start_date=None, cycle_id=Non
             db.add(EventCycleHistory(cycle_id=cycle_id, provider_id="DART", started_at=now, finished_at=datetime.now(timezone.utc), status="locked", dry_run=False, poll_status="not_polled", is_page_complete=False, metadata_json={"scope": list(corp_codes), "reason": "advisory_lock_unavailable"}))
             db.commit()
         return {"cycle_id": cycle_id, "status": "locked"}
+

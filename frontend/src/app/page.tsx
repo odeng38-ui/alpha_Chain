@@ -1,18 +1,20 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BarChart3, Building2, CalendarDays, Command, Network, Newspaper, Search, Settings, Wifi, WifiOff } from 'lucide-react';
+import { BarChart3, Building2, CalendarDays, Command, Network, Newspaper, Radar, Search, Settings, Wifi, WifiOff } from 'lucide-react';
 import { ChainMap } from '@/components/chain-map';
 import { CompanyDetail } from '@/components/company-detail';
 import { MarketDashboard } from '@/components/market-dashboard';
 import { NewsImpact } from '@/components/news-impact';
 import { ErrorState, LoadingState } from '@/components/ui-state';
+import { EventFirstDashboard } from '@/components/event-first-dashboard';
 import { getCompanies, getCompanyDetail, getDashboard, getGraph, getNewsImpacts, getNewsImpactStatus } from '@/lib/api';
 import type { CompanyDetailData, CompanySummary, DashboardData, GraphData, GraphEdge, NewsImpactStatus, NewsStockCandidate } from '@/lib/types';
 
-type View = 'market' | 'news' | 'company' | 'chain';
+type View = 'market' | 'events' | 'news' | 'company' | 'chain';
 const navigation = [
   { id: 'market', label: '시장', icon: BarChart3 },
+  { id: 'events', label: '이벤트 분석', icon: Radar },
   { id: 'news', label: '뉴스 임팩트', icon: Newspaper },
   { id: 'company', label: '종목 분석', icon: Building2 },
   { id: 'chain', label: '체인맵', icon: Network },
@@ -59,7 +61,7 @@ export default function Home() {
   useEffect(() => { void loadBase(); }, [loadBase, refreshKey]);
 
   useEffect(() => {
-    if (view === 'market' || view === 'news') return;
+    if (view === 'market' || view === 'events' || view === 'news') return;
     const timer = window.setTimeout(() => {
       void getCompanies(query.trim())
         .then((result) => setCompanies(result.data))
@@ -69,7 +71,7 @@ export default function Home() {
   }, [query, view]);
 
   useEffect(() => {
-    if (!selectedCompanyId || view === 'market' || view === 'news') return;
+    if (!selectedCompanyId || view === 'market' || view === 'events' || view === 'news') return;
     setLoading(true);
     setError(null);
     setSelectedEdge(null);
@@ -156,8 +158,8 @@ export default function Home() {
         <section className="content-area">
           <div className="content-title">
             <div>
-              <span className="kicker">{view === 'market' ? 'OVERVIEW' : view === 'news' ? 'GLOBAL NEWS IMPACT' : selectedCompany?.name ?? 'COMPANY'}</span>
-              <h1>{view === 'market' ? '오늘의 시장' : view === 'news' ? '미국 뉴스 → 한국 종목' : view === 'company' ? '종목 상세 분석' : '공급망 체인 탐색'}</h1>
+              <span className="kicker">{view === 'market' ? 'OVERVIEW' : view === 'events' ? 'EVENT-FIRST INTELLIGENCE' : view === 'news' ? 'GLOBAL NEWS IMPACT' : selectedCompany?.name ?? 'COMPANY'}</span>
+              <h1>{view === 'market' ? '오늘의 시장' : view === 'events' ? '이벤트 기반 투자 분석' : view === 'news' ? '미국 뉴스 → 한국 종목' : view === 'company' ? '종목 상세 분석' : '공급망 체인 탐색'}</h1>
             </div>
             {view === 'chain' && (
               <div className="graph-controls">
@@ -171,9 +173,10 @@ export default function Home() {
             )}
           </div>
 
-          {loading ? <LoadingState />
-            : error ? <ErrorState message={error} retry={() => setRefreshKey((value) => value + 1)} />
+          {view !== 'events' && loading ? <LoadingState />
+            : view !== 'events' && error ? <ErrorState message={error} retry={() => setRefreshKey((value) => value + 1)} />
               : view === 'market' && dashboard ? <MarketDashboard data={dashboard} onSelectCompany={(companyId) => { setSelectedCompanyId(companyId); setView('company'); }} />
+                : view === 'events' ? <EventFirstDashboard asOf={asOf} onOpenChain={(companyId) => { setSelectedCompanyId(companyId); setView('chain'); }} />
                 : view === 'news' ? <NewsImpact candidates={newsCandidates} status={newsImpactStatus} onSelectTicker={selectNewsTicker} />
                 : view === 'company' && detail ? <CompanyDetail data={detail} />
                   : view === 'chain' && graph ? <ChainMap data={graph} selectedEdge={selectedEdge} onSelectEdge={setSelectedEdge} />

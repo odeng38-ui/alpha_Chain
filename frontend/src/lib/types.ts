@@ -196,6 +196,19 @@ export type EventFirstCandidate = {
     config_hash?: string;
     created_at?: string | null;
   };
+  market_reaction?: {
+    status: 'available' | 'insufficient_market_data' | 'not_available';
+    reaction_timing?: 'next_trading_day' | 'same_trading_day';
+    base_trade_date?: string | null;
+    base_price?: number | null;
+    base_volume?: number | null;
+    reaction_trade_date?: string | null;
+    reaction_price?: number | null;
+    reaction_volume?: number | null;
+    return_pct?: number | null;
+    volume_change_pct?: number | null;
+    causality_note?: string;
+  };
   analysis_states: Record<string, string>;
 };
 

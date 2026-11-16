@@ -95,3 +95,172 @@ class USMarketEventService:
         ).all()] if touched_external_ids else []
         return {"as_of": as_of.isoformat(), "symbols": len(tuple(symbols)), "created": created,
                 "updated": updated, "event_ids": event_ids, "failures": failures}
+
+
+# ---------------------------------------------------------------------------
+# USMarketCompanyCandidateService (CORE-US-FLOW-03)
+# ---------------------------------------------------------------------------
+
+from typing import Any, Dict, List, Optional
+from datetime import timezone
+from app.models.schema import Company, EventCompanyLink, IdentifierMap, NewsArticle
+from app.services.event_impact_service import SYMBOL_INDUSTRY_EXPOSURE
+
+
+class USMarketCompanyCandidateService:
+    """Connect US market signals -> relevant industries -> US company candidates.
+
+    Differentiates:
+    - Official SEC corporate event confirmed companies (b4_routing_eligible=True)
+    - Industry exposure candidates (market_exposure_candidate, unverified, b4_routing_eligible=False)
+    - News mention candidates without SEC filing (news_mention_candidate, unverified, b4_routing_eligible=False)
+    """
+
+    @staticmethod
+    def resolve_candidates(
+        db: Session,
+        *,
+        market_event_id: int,
+        as_of: datetime,
+    ) -> Dict[str, Any]:
+        market_event = db.get(GlobalEvent, market_event_id)
+        if market_event is None:
+            raise LookupError(f"GlobalEvent(id={market_event_id}) not found")
+
+        # 1. Market signal source & timestamp
+        symbol = market_event.symbol or ""
+        exposure_map = SYMBOL_INDUSTRY_EXPOSURE.get(symbol, {})
+
+        # 2. Query all registered US companies
+        us_companies = db.query(Company).filter(
+            Company.country_code == "US",
+        ).order_by(Company.id).all()
+
+        as_of_dt = as_of if isinstance(as_of, datetime) else datetime.combine(as_of, datetime.max.time())
+        if as_of_dt.tzinfo is None:
+            as_of_dt = as_of_dt.replace(tzinfo=timezone.utc)
+
+        candidates = []
+        for comp in us_companies:
+            # Check CIK mapping
+            cik_map = (
+                db.query(IdentifierMap)
+                .filter(
+                    IdentifierMap.company_id == comp.id,
+                    IdentifierMap.source == "CIK",
+                    IdentifierMap.effective_to.is_(None),
+                )
+                .first()
+            )
+            cik_value = cik_map.source_id_value if cik_map else None
+
+            # Check if there is an official SEC event with an ANCHOR link for this company
+            sec_link = (
+                db.query(EventCompanyLink, GlobalEvent)
+                .join(GlobalEvent, EventCompanyLink.event_id == GlobalEvent.id)
+                .filter(
+                    EventCompanyLink.company_id == comp.id,
+                    EventCompanyLink.role == "ANCHOR",
+                    GlobalEvent.source == "SEC",
+                    GlobalEvent.occurred_at <= as_of_dt.replace(tzinfo=None),
+                )
+                .order_by(GlobalEvent.occurred_at.desc())
+                .first()
+            )
+
+            # Check if news mentions this company
+            news_mention = None
+            if not sec_link:
+                cutoff_news = as_of_dt.replace(tzinfo=None) - timedelta(days=7)
+                news_mention = (
+                    db.query(NewsArticle)
+                    .filter(
+                        NewsArticle.published_at <= as_of_dt.replace(tzinfo=None),
+                        NewsArticle.published_at >= cutoff_news,
+                        NewsArticle.title.ilike(f"%{comp.name}%"),
+                    )
+                    .order_by(NewsArticle.published_at.desc())
+                    .first()
+                )
+
+            # Categorize candidate
+            if sec_link:
+                link_obj, sec_ev = sec_link
+                is_verified = (sec_ev.verification_status == "verified" and link_obj.verification_status == "verified")
+                candidates.append({
+                    "company_id": comp.id,
+                    "company_name": comp.name,
+                    "legal_name": comp.legal_name,
+                    "country_code": comp.country_code,
+                    "industry_id": comp.industry_id,
+                    "cik": cik_value,
+                    "candidate_category": "sec_event_candidate",
+                    "b4_routing_eligible": is_verified,
+                    "verification_status": "verified" if is_verified else "proposed",
+                    "sec_event_id": sec_ev.id,
+                    "sec_external_id": sec_ev.external_id,
+                    "sec_title": sec_ev.title,
+                    "sec_anchor_link_id": link_obj.id,
+                    "rationale": f"Official SEC filing confirmed ({sec_ev.title})",
+                    "evidence_type": "OFFICIAL_REGULATORY",
+                })
+            elif comp.industry_id and comp.industry_id in exposure_map:
+                weight = exposure_map[comp.industry_id]
+                candidates.append({
+                    "company_id": comp.id,
+                    "company_name": comp.name,
+                    "legal_name": comp.legal_name,
+                    "country_code": comp.country_code,
+                    "industry_id": comp.industry_id,
+                    "cik": cik_value,
+                    "candidate_category": "market_exposure_candidate",
+                    "b4_routing_eligible": False,
+                    "verification_status": "unverified",
+                    "sec_event_id": None,
+                    "sec_external_id": None,
+                    "sec_title": None,
+                    "sec_anchor_link_id": None,
+                    "exposure_weight": weight,
+                    "rationale": f"Industry exposure to {comp.industry_id} from {symbol} shock (weight: {weight:.2f})",
+                    "b4_ineligibility_reason": "no_official_sec_event_unverified_industry_exposure",
+                    "evidence_type": "MARKET_INDEX_EXPOSURE",
+                })
+            elif news_mention:
+                candidates.append({
+                    "company_id": comp.id,
+                    "company_name": comp.name,
+                    "legal_name": comp.legal_name,
+                    "country_code": comp.country_code,
+                    "industry_id": comp.industry_id,
+                    "cik": cik_value,
+                    "candidate_category": "news_mention_candidate",
+                    "b4_routing_eligible": False,
+                    "verification_status": "unverified",
+                    "sec_event_id": None,
+                    "sec_external_id": None,
+                    "sec_title": None,
+                    "sec_anchor_link_id": None,
+                    "news_article_id": news_mention.id,
+                    "rationale": f"Mentioned in global market news ({news_mention.title})",
+                    "b4_ineligibility_reason": "news_mention_only_no_official_sec_filing",
+                    "evidence_type": "NEWS_MENTION",
+                })
+
+        return {
+            "market_signal": {
+                "event_id": market_event.id,
+                "source": market_event.source,
+                "symbol": market_event.symbol,
+                "occurred_at": market_event.occurred_at.isoformat() if market_event.occurred_at else None,
+                "available_at": market_event.available_at.isoformat() if market_event.available_at else None,
+                "shock_score": market_event.shock_score,
+                "direction": market_event.direction,
+                "return_1d": market_event.return_1d,
+            },
+            "as_of": as_of_dt.isoformat(),
+            "identified_industries": exposure_map,
+            "us_company_candidates": candidates,
+            "b4_forwardable_candidates": [c for c in candidates if c["b4_routing_eligible"]],
+            "market_exposure_candidates": [c for c in candidates if c["candidate_category"] == "market_exposure_candidate"],
+            "news_mention_candidates": [c for c in candidates if c["candidate_category"] == "news_mention_candidate"],
+        }

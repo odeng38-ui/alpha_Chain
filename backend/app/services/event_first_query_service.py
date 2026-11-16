@@ -1,7 +1,7 @@
 """Read-only Event-First view model assembled from existing stored results."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Protocol
 
@@ -74,8 +74,20 @@ class EventFirstQueryService:
             event = analysis.get("event")
             if not isinstance(event, dict):
                 raise EventFirstNotFound("event not found")
+            event_time = None
+            raw_time = event.get("available_at") or event.get("occurred_at")
+            if isinstance(raw_time, datetime):
+                event_time = raw_time
+            elif isinstance(raw_time, str):
+                try:
+                    event_time = datetime.fromisoformat(raw_time)
+                except ValueError:
+                    event_time = None
+            if event_time is None:
+                event_time = cutoff
+
             candidates = tuple(
-                self._candidate(db, row, cutoff, score_horizon, score_version)
+                self._candidate(db, row, cutoff, score_horizon, score_version, event_time=event_time)
                 for row in analysis.get("candidates", ())
             )
         if db.new or db.dirty or db.deleted:
@@ -129,6 +141,7 @@ class EventFirstQueryService:
         as_of: datetime,
         horizon: str,
         version: str,
+        event_time: datetime | None = None,
     ) -> dict[str, Any]:
         securities = row.get("securities") or []
         security = securities[0] if securities else None
@@ -160,6 +173,7 @@ class EventFirstQueryService:
             "paths": paths,
             "price": self._price(db, security_id, as_of),
             "alpha_score": self._score(db, security_id, as_of, horizon, version),
+            "market_reaction": self._market_reaction(db, security_id, event_time or as_of, as_of),
             "analysis_states": {
                 "relationship_deep_verification": "not_requested",
                 "industry_impact": "not_requested",
@@ -266,4 +280,87 @@ class EventFirstQueryService:
             "components": row.component,
             "config_hash": row.config_hash,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+
+    @classmethod
+    def _market_reaction(
+        cls,
+        db: Session,
+        security_id: int | None,
+        event_time: datetime,
+        as_of: datetime,
+    ) -> dict[str, Any]:
+        if security_id is None:
+            return {"status": "not_available"}
+
+        kst = timezone(timedelta(hours=9))
+        event_kst = event_time.astimezone(kst) if event_time.tzinfo else event_time.replace(tzinfo=timezone.utc).astimezone(kst)
+        as_of_kst = as_of.astimezone(kst) if as_of.tzinfo else as_of.replace(tzinfo=timezone.utc).astimezone(kst)
+
+        # 한국 거래소 정규장 마감 15:30 KST 기준
+        # 15:30 이후 공개된 경우 당일 장 마감 후이므로 다음 거래일이 첫 반응일
+        post_market = event_kst.time() >= time(15, 30)
+
+        if post_market:
+            base_date_target = event_kst.date()
+            reaction_date_min = event_kst.date() + timedelta(days=1)
+            reaction_timing = "next_trading_day"
+        else:
+            base_date_target = event_kst.date() - timedelta(days=1)
+            reaction_date_min = event_kst.date()
+            reaction_timing = "same_trading_day"
+
+        base_row = (
+            db.query(DailyPrice)
+            .filter(DailyPrice.security_id == security_id, DailyPrice.trade_date <= base_date_target)
+            .order_by(DailyPrice.trade_date.desc())
+            .first()
+        )
+
+        reaction_row = (
+            db.query(DailyPrice)
+            .filter(
+                DailyPrice.security_id == security_id,
+                DailyPrice.trade_date >= reaction_date_min,
+                DailyPrice.trade_date <= as_of_kst.date(),
+            )
+            .order_by(DailyPrice.trade_date.asc())
+            .first()
+        )
+
+        if base_row is None or reaction_row is None:
+            return {
+                "status": "insufficient_market_data",
+                "reaction_timing": reaction_timing,
+                "base_trade_date": base_row.trade_date.isoformat() if base_row else None,
+                "reaction_trade_date": reaction_row.trade_date.isoformat() if reaction_row else None,
+                "causality_note": "사건 시점 전후의 가격 또는 거래량 데이터가 충분하지 않아 반응을 산출할 수 없습니다.",
+            }
+
+        p_base = float(base_row.adjusted_close or base_row.close) if (base_row.adjusted_close or base_row.close) is not None else None
+        p_reaction = float(reaction_row.adjusted_close or reaction_row.close) if (reaction_row.adjusted_close or reaction_row.close) is not None else None
+
+        ret_pct = None
+        if p_base is not None and p_reaction is not None and p_base > 0:
+            ret_pct = round((p_reaction - p_base) / p_base * 100, 2)
+
+        vol_base = base_row.volume
+        vol_reaction = reaction_row.volume
+        vol_change_pct = None
+        if vol_base is not None and vol_reaction is not None and vol_base > 0:
+            vol_change_pct = round((vol_reaction - vol_base) / vol_base * 100, 2)
+
+        return {
+            "status": "available",
+            "reaction_timing": reaction_timing,
+            "base_trade_date": base_row.trade_date.isoformat(),
+            "base_price": p_base,
+            "base_volume": vol_base,
+            "reaction_trade_date": reaction_row.trade_date.isoformat(),
+            "reaction_price": p_reaction,
+            "reaction_volume": vol_reaction,
+            "return_pct": ret_pct,
+            "volume_change_pct": vol_change_pct,
+            "causality_note": "본 가격·거래량 변동은 사건 시점 전후의 단순 관찰값이며 공급망 연결에 따른 직접적인 수혜 또는 인과관계를 입증하지 않습니다.",
         }

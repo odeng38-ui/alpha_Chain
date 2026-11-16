@@ -379,3 +379,158 @@ class EventCompanyLinkService:
                 "Single-anchor analysis is ambiguous."
             )
         return anchors[0]
+
+
+# ---------------------------------------------------------------------------
+# SecEventAnchorService (CORE-US-FLOW-02)
+# ---------------------------------------------------------------------------
+
+class SecEventAnchorService:
+    """Connect official SEC filing events to US Company anchors via verified CIK identifiers.
+
+    Rules (CORE-US-FLOW-02):
+    1. Identify CIK and accession number from SEC filing metadata.
+    2. Lookup US Company via IdentifierMap(source='CIK', source_id_value=normalized_cik).
+    3. If mapping is not unique or missing, do NOT create anchor; hold/abort safely.
+    4. Link official regulatory evidence (source_url, document, published_at, excerpt).
+    5. Link event and issuing US Company as ANCHOR candidate.
+    6. All newly created event, evidence, anchor verification_status defaults to 'proposed'.
+    7. Unverified events/anchors are naturally excluded from B4 traversal.
+    8. Idempotent: prevent duplicate event, evidence, or anchor creation.
+    """
+
+    @staticmethod
+    def ingest_sec_filing(
+        db: Session,
+        *,
+        cik: str,
+        accession_number: str,
+        title: str,
+        published_at: datetime,
+        source_url: str,
+        summary: Optional[str] = None,
+        excerpt: Optional[str] = None,
+        event_kind: str = "CAPEX_EXPANSION",
+        collected_at: Optional[datetime] = None,
+        symbol: Optional[str] = None,
+    ) -> dict[str, Any]:
+        from app.services.identifier_service import normalize_identifier
+
+        # 1. Normalize CIK and construct idempotent external_id
+        normalized_cik = normalize_identifier("CIK", cik)
+        external_id = f"sec:{normalized_cik}:{accession_number}"
+
+        # 2. Check / create GlobalEvent (idempotent)
+        event = db.query(GlobalEvent).filter(GlobalEvent.external_id == external_id).first()
+        created_event = False
+        if event is None:
+            raw_hash = hashlib.sha256(external_id.encode("utf-8")).hexdigest()
+            occ_dt = published_at.replace(tzinfo=None) if published_at.tzinfo else published_at
+            event = GlobalEvent(
+                external_id=external_id,
+                source="SEC",
+                origin_country="US",
+                event_kind=event_kind,
+                symbol=symbol,
+                title=title,
+                summary=summary,
+                occurred_at=occ_dt,
+                available_at=occ_dt,
+                collected_at=(collected_at.replace(tzinfo=None) if collected_at and collected_at.tzinfo else collected_at) or datetime.utcnow(),
+                verification_status="proposed",
+                shock_score=0,
+                raw_hash=raw_hash,
+            )
+            db.add(event)
+            db.flush()
+            created_event = True
+
+        # 3. Check / create GlobalEventEvidence (idempotent)
+        excerpt_text = excerpt or summary or title
+        evidence = GlobalEventEvidenceService.detect_duplicate(db, source_url, excerpt_text)
+        created_evidence = False
+        if evidence is None:
+            pub_aware = published_at if published_at.tzinfo else published_at.replace(tzinfo=timezone.utc)
+            evidence = GlobalEventEvidenceService.register(
+                db,
+                event_id=event.id,
+                evidence_type="REGULATORY",
+                source_url=source_url,
+                source_document=f"SEC Form 8-K {accession_number}",
+                excerpt=excerpt_text,
+                published_at=pub_aware,
+                collected_at=collected_at,
+            )
+            created_evidence = True
+
+        # 4. Find US Company mapping by CIK
+        active_maps = (
+            db.query(IdentifierMap)
+            .filter(
+                IdentifierMap.source == "CIK",
+                IdentifierMap.source_id_value == normalized_cik,
+                IdentifierMap.effective_to.is_(None),
+            )
+            .all()
+        )
+
+        if not active_maps:
+            return {
+                "status": "hold_no_identifier_mapping",
+                "event_id": event.id,
+                "evidence_id": evidence.id,
+                "anchor_link_id": None,
+                "company_id": None,
+                "reason": f"No active IdentifierMap found for CIK={cik}",
+                "created_event": created_event,
+                "created_evidence": created_evidence,
+            }
+
+        company_ids = {m.company_id for m in active_maps}
+        if len(company_ids) > 1:
+            return {
+                "status": "hold_identifier_conflict",
+                "event_id": event.id,
+                "evidence_id": evidence.id,
+                "anchor_link_id": None,
+                "company_id": None,
+                "reason": f"CIK={cik} maps to multiple companies: {company_ids}",
+                "created_event": created_event,
+                "created_evidence": created_evidence,
+            }
+
+        company_id = list(company_ids)[0]
+        company = db.get(Company, company_id)
+        if company is None or company.country_code != "US":
+            return {
+                "status": "hold_not_us_company",
+                "event_id": event.id,
+                "evidence_id": evidence.id,
+                "anchor_link_id": None,
+                "company_id": company_id,
+                "reason": f"Company {company_id} is not a verified US company (country_code={getattr(company, 'country_code', None)})",
+                "created_event": created_event,
+                "created_evidence": created_evidence,
+            }
+
+        # 5. Link US Company as ANCHOR via EventCompanyLinkService (idempotent, verification_status='proposed')
+        anchor_link = EventCompanyLinkService.link_by_identifier(
+            db,
+            event_id=event.id,
+            source="CIK",
+            source_id_value=normalized_cik,
+            role="ANCHOR",
+            evidence_id=evidence.id,
+            verification_status="proposed",
+        )
+
+        return {
+            "status": "linked_proposed",
+            "event_id": event.id,
+            "evidence_id": evidence.id,
+            "anchor_link_id": anchor_link.id,
+            "company_id": company_id,
+            "verification_status": "proposed",
+            "created_event": created_event,
+            "created_evidence": created_evidence,
+        }

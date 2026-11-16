@@ -102,3 +102,160 @@ export type NewsImpactStatus = {
     reasons: string[];
   };
 };
+
+export type GlobalEventSummary = {
+  id: number | string;
+  external_id?: string;
+  source: string;
+  source_type?: 'stored' | 'fixture_demo' | string;
+  is_demo?: boolean;
+  origin_country: string;
+  event_kind: string;
+  symbol: string | null;
+  title: string;
+  summary: string | null;
+  direction: string | null;
+  occurred_at: string;
+  available_at: string;
+  return_1d: number | null;
+  zscore_20d: number | null;
+  shock_score: number | null;
+};
+
+export type EventFirstEvidence = {
+  evidence_id?: number | string;
+  evidence_type?: string;
+  publisher?: string;
+  source?: string;
+  source_url?: string | null;
+  source_document?: string | null;
+  document_version?: string;
+  excerpt?: string | null;
+  text?: string | null;
+  location?: string | null;
+  published_at?: string | null;
+  available_at?: string | null;
+  collected_at?: string | null;
+  verification_status?: string;
+};
+
+export type EventFirstRelationship = {
+  relationship_id?: number | string;
+  supplier_id?: number;
+  customer_id?: number;
+  original_type?: string;
+  verification_status?: string;
+  confidence?: number;
+  valid_from?: string | null;
+  valid_to?: string | null;
+  evidence?: EventFirstEvidence[];
+};
+
+export type EventFirstCandidate = {
+  company_id: number;
+  company_name: string;
+  market: string | null;
+  ticker: string | null;
+  security_id: number | null;
+  relationship_depth: number | null;
+  classification: string;
+  eligibility_status: string;
+  project_link_status: string;
+  valid_from: string | null;
+  valid_to: string | null;
+  evidence_status: string;
+  data_origin?: 'stored' | 'fixture_demo' | string;
+  is_demo?: boolean;
+  evidence: EventFirstEvidence[];
+  paths: {
+    tier?: number;
+    node_path?: number[];
+    nodes?: { company_id?: number; id?: number; legal_name?: string; name?: string }[];
+    relationships?: EventFirstRelationship[];
+  }[];
+  price: {
+    status: 'available' | 'stale' | 'not_available';
+    trade_date?: string;
+    age_days?: number;
+    open?: number | null;
+    high?: number | null;
+    low?: number | null;
+    close?: number | null;
+    adjusted_close?: number | null;
+    volume?: number | null;
+  };
+  alpha_score: {
+    status: 'available' | 'not_computed';
+    as_of_date?: string;
+    horizon?: string;
+    version?: string;
+    score?: number;
+    confidence?: number;
+    completeness?: number;
+    components?: Record<string, number | null>;
+    config_hash?: string;
+    created_at?: string | null;
+  };
+  analysis_states: Record<string, string>;
+};
+
+export type EventFirstAnalysis = {
+  event: {
+    event_id?: number | string;
+    id?: number | string;
+    title: string;
+    event_kind?: string;
+    origin_country?: string;
+    occurred_at?: string;
+    available_at?: string;
+    verification_status?: string;
+    status?: string;
+    summary?: string | null;
+  };
+  anchor: {
+    company_id: number | null;
+    company_name: string | null;
+    cik: string | null;
+    verification_status?: string | null;
+  } | null;
+  anchor_company?: {
+    company_id?: number | null;
+    company_name?: string | null;
+    legal_name?: string | null;
+    cik?: string | null;
+    source?: string;
+    value?: string;
+    confidence?: string;
+  } | null;
+  analysis_context: {
+    mode: 'stored_data' | 'fixture_demo' | string;
+    as_of: string;
+    score_horizon: string;
+    score_version: string;
+  };
+  candidates: EventFirstCandidate[];
+  excluded_candidates: { company_id?: number; reason?: string; role?: string }[];
+  event_evidence: EventFirstEvidence[];
+  uncertainties: string[];
+  empty_reasons: string[];
+  policy: {
+    investment_recommendation: boolean;
+    analysis_completed_is_fact_verified: boolean;
+    future_information_excluded: boolean;
+  };
+  processing_status?: string;
+  event_candidate_id?: string;
+  is_demo?: boolean;
+  source_type?: 'stored' | 'fixture_demo' | string;
+  event_priority?: {
+    score: number | null;
+    reasons: string[];
+    status?: 'not_computed' | 'computed';
+  };
+  exclusion_reasons?: string[];
+  event_first_connection?: {
+    compatible: boolean;
+    path: string;
+    event_id: string;
+  };
+};

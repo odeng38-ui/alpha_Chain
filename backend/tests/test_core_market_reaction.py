@@ -3,7 +3,7 @@ Validates market reaction integration for US Event -> Korean Security (Hanmi Sem
 Checks Korean market close (15:30 KST) timing rule, pre/post reaction prices, insufficient data handling,
 and non-causal disclaimer.
 """
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
-from app.models.schema import Company, DailyPrice, GlobalEvent, ScoreSnapshot, Security
+from app.models.schema import Company, DailyPrice, ScoreSnapshot, Security
 from app.services.event_first_query_service import EventFirstQueryService
 
 

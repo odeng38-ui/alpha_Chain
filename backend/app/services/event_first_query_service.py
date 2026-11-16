@@ -1,7 +1,7 @@
 """Read-only Event-First view model assembled from existing stored results."""
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Protocol
 

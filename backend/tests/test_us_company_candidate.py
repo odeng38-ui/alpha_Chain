@@ -9,6 +9,7 @@ Verifies the 6 completion conditions:
 6. Ungrounded companies/Korean securities are not arbitrarily linked.
 """
 from datetime import date, datetime, timezone
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -21,7 +22,6 @@ from app.models.schema import (
     GlobalEvent,
     GlobalEventEvidence,
     IdentifierMap,
-    NewsArticle,
     Relationship,
     RelationshipEvidence,
     Security,

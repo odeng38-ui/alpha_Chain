@@ -1,11 +1,13 @@
 import hashlib
 import json
 import statistics
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict
 
 from sqlalchemy.orm import Session
 
-from app.models.schema import GlobalEvent
+from app.models.schema import Company, EventCompanyLink, GlobalEvent, IdentifierMap, NewsArticle
+from app.services.event_impact_service import SYMBOL_INDUSTRY_EXPOSURE
 
 DEFAULT_US_SYMBOLS = ("^GSPC", "^IXIC", "^DJI", "^SOX")
 SYMBOL_NAMES = {
@@ -100,11 +102,6 @@ class USMarketEventService:
 # ---------------------------------------------------------------------------
 # USMarketCompanyCandidateService (CORE-US-FLOW-03)
 # ---------------------------------------------------------------------------
-
-from typing import Any, Dict, List, Optional
-from datetime import timezone
-from app.models.schema import Company, EventCompanyLink, IdentifierMap, NewsArticle
-from app.services.event_impact_service import SYMBOL_INDUSTRY_EXPOSURE
 
 
 class USMarketCompanyCandidateService:

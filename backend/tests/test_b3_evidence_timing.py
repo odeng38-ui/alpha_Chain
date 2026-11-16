@@ -7,7 +7,8 @@ Tests the 5 core time-integrity rules without running full regressions:
 4. Unverified evidence: excluded even if timestamps are valid
 5. Existing records with only published_at (first_seen_at is None): 100% backward compatible
 """
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -18,7 +19,6 @@ from app.models.schema import Company, Relationship, RelationshipEvidence
 from app.services.supply_chain_service import (
     SupplyChainService,
     get_evidence_available_at,
-    to_utc_datetime,
 )
 
 UTC = timezone.utc

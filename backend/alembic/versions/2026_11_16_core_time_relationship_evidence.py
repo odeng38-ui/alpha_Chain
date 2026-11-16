@@ -1,6 +1,6 @@
 """Make relationship_evidence.published_at nullable and add first_seen_at column.
 
-Revision ID: 20261116_core_time_relationship_evidence
+Revision ID: 20261116_core_time_evidence
 Revises: 20261111_ef14_event_staging
 Create Date: 2026-11-16
 
@@ -15,9 +15,10 @@ Safety & Migration Notes:
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
-revision = "20261116_core_time_relationship_evidence"
+revision = "20261116_core_time_evidence"
 down_revision = "20261111_ef14_event_staging"
 branch_labels = None
 depends_on = None

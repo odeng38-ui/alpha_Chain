@@ -1,6 +1,8 @@
 # Changelog
 
 ## 2026-11-16
+- CORE-CI-FIX-03: Alembic revision ID를 `20261116_core_time_evidence`(27자)로 최소 수정하여 PostgreSQL `alembic_version` VARCHAR(32) 한도 준수 및 격리 마이그레이션 검증 완료.
+- CORE-CI-FIX-02: PR #10에 Ruff 수정 커밋 `3da23bd` 반영 완료. Lint 통과 확인 및 PostgreSQL 마이그레이션 단계의 Alembic revision 문자열 길이 초과(32자 한도) 오류 규명.
 - CORE-CI-FIX-01: PR #10 백엔드 CI 차단 원인이었던 Ruff 16건 오류(미사용 import 8건, 중간 import 4건, 정렬 4건) 최소 수정 완료 및 `ruff check` 전체 통과.
 - CORE-INTEGRATION-08: `feat/alpha-chain-core-flow-v1` 원격 push 및 PR #9 base 후속 Draft PR #10 생성 완료.
 - CORE-INTEGRATION-07: CORE-TIME-02부터 CORE-DASHBOARD-01까지 핵심 변경사항 18개 파일 신규 로컬 브랜치 `feat/alpha-chain-core-flow-v1` 커밋(`ae14898`) 확정.

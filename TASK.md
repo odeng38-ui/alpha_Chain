@@ -86,3 +86,20 @@
   - `python -m ruff check app tests`: All checks passed (0 errors).
 - 다음 한 가지 작업: Phase 3 격리 환경 통합 테스트 및 PR 준비 승인 대기.
 - 운영 DB 쓰기/마이그레이션/Worker/Actions/배포/Push/PR 없음.
+
+## CORE-EVIDENCE-03: SEC 운영 관리자 API (`POST /api/v1/sec/ingest-one`)
+
+- 작업: 기존 FastAPI 구조에 관리자 전용 SEC 단건 수집 및 dry-run API 구현.
+- 결과:
+  1. `backend/app/api/v1/endpoints/sec.py`: `POST /api/v1/sec/ingest-one` 엔드포인트 구현 (`require_admin` 인증, `dry_run=True` 기본값, Pydantic 모델).
+  2. `backend/app/api/v1/api.py`: `sec_router` 등록.
+  3. `backend/app/services/sec_filing_service.py`: `preview_filing()` 추가로 zero-write, zero-flush 순수 읽기 dry-run 구현, 미분류 공시 기본값 `UNCLASSIFIED_FILING` 적용.
+  4. `backend/app/adapters/sec_adapter.py`: 가짜/더미 `.local` User-Agent 차단 및 실제 연락처 포함 강제 검증(`validate_sec_user_agent`).
+- 검증:
+  - 실제 SEC EDGAR 공식 API에서 Micron Form 8-K 조회 성공 (Status 200).
+  - Dry-run 실행 시 DB 행 0건(쓰기·flush 일체 없음) 무결성 확인.
+  - `dry_run=False` 시 격리 DB에 `GlobalEvent`, `Evidence`, `Anchor`가 정확히 `proposed` 상태로 저장됨 확인.
+  - 가짜 User-Agent 요청 시 400 에러 차단 확인.
+  - 인증 헤더 부재 시 401 차단 확인.
+  - `ruff check app tests`: All checks passed.
+- 운영 DB 쓰기/마이그레이션/Worker/Actions/배포/Push/PR 없음.

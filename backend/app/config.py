@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000")
     DOCS_ENABLED: bool = os.getenv("DOCS_ENABLED", "true").lower() == "true"
     SCHEDULER_ENABLED: bool = os.getenv("SCHEDULER_ENABLED", "true").lower() == "true"
-    SEC_USER_AGENT: str = os.getenv("SEC_USER_AGENT", "AlphaChain/1.0 (contact@alphachain.local)")
+    SEC_USER_AGENT: str = os.getenv("SEC_USER_AGENT", "AlphaChain/1.0 (contact@alphachain.org)")
     SEC_RATE_LIMIT_PER_SEC: float = float(os.getenv("SEC_RATE_LIMIT_PER_SEC", "10.0"))
     SEC_TIMEOUT_SEC: float = float(os.getenv("SEC_TIMEOUT_SEC", "10.0"))
 

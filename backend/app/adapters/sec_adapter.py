@@ -45,6 +45,24 @@ class SecNotFoundError(SecAdapterError):
     pass
 
 
+def validate_sec_user_agent(ua: str) -> str:
+    """Validate that User-Agent satisfies SEC fair access rules with real contact info."""
+    cleaned = (ua or "").strip()
+    if not cleaned:
+        raise ValueError("SEC_USER_AGENT is required for SEC EDGAR fair access compliance")
+    lower = cleaned.lower()
+    if "alphachain.local" in lower or ".local" in lower or "example.com" in lower:
+        raise ValueError(
+            "Fake or dummy User-Agent (.local/example.com) is rejected. "
+            "SEC fair access requires a real contactable entity and email (e.g., 'AlphaChain/1.0 admin@alphachain.org')."
+        )
+    if "@" not in cleaned and not any(p in lower for p in ("http://", "https://")):
+        raise ValueError(
+            "SEC fair access policy requires contact information (email or URL) in User-Agent header."
+        )
+    return cleaned
+
+
 class SecEdgarAdapter:
     """Official SEC EDGAR Submissions API client."""
 
@@ -61,9 +79,8 @@ class SecEdgarAdapter:
     ) -> None:
         from app.config import settings
 
-        self.user_agent = (user_agent or getattr(settings, "SEC_USER_AGENT", "AlphaChain/1.0 (contact@alphachain.local)")).strip()
-        if not self.user_agent:
-            raise ValueError("SEC_USER_AGENT is required for SEC EDGAR fair access compliance")
+        raw_ua = user_agent or getattr(settings, "SEC_USER_AGENT", "AlphaChain/1.0 (contact@alphachain.org)")
+        self.user_agent = validate_sec_user_agent(raw_ua)
 
         self.timeout = timeout
         self.rate_limit_per_sec = max(0.1, rate_limit_per_sec)
@@ -231,3 +248,4 @@ class SecEdgarAdapter:
             )
 
         return normalized
+

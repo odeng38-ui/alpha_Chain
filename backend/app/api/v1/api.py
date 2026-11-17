@@ -13,6 +13,7 @@ from app.api.v1.endpoints.news import router as news_router
 from app.api.v1.endpoints.prices import router as prices_router
 from app.api.v1.endpoints.relationships import router as relationships_router
 from app.api.v1.endpoints.scores import router as scores_router
+from app.api.v1.endpoints.sec import router as sec_router
 from app.api.v1.endpoints.ui import router as ui_router
 
 api_router = APIRouter(prefix="/api/v1")
@@ -29,4 +30,5 @@ api_router.include_router(global_events_router)
 api_router.include_router(graph_router)
 api_router.include_router(relationships_router)
 api_router.include_router(scores_router)
+api_router.include_router(sec_router)
 api_router.include_router(ui_router)

@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-11-17
+- CORE-EVIDENCE-02 (Phase 2): SEC EDGAR 공식 공시 어댑터(`SecEdgarAdapter`), 단건 수집 서비스(`SecFilingService`), dry-run 지원 및 11개 격리 테스트 구현 완료.
+
 ## 2026-11-16
 - CORE-CI-FIX-03: Alembic revision ID를 `20261116_core_time_evidence`(27자)로 최소 수정하여 PostgreSQL `alembic_version` VARCHAR(32) 한도 준수 및 격리 마이그레이션 검증 완료.
 - CORE-CI-FIX-02: PR #10에 Ruff 수정 커밋 `3da23bd` 반영 완료. Lint 통과 확인 및 PostgreSQL 마이그레이션 단계의 Alembic revision 문자열 길이 초과(32자 한도) 오류 규명.

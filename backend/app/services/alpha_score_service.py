@@ -203,13 +203,16 @@ class AlphaScoreService:
             or_(Relationship.valid_from.is_(None), Relationship.valid_from <= as_of),
             or_(Relationship.valid_to.is_(None), Relationship.valid_to >= as_of),
         ).all()
-        usable = [(row, [ev for ev in row.evidences if ev.published_at <= cutoff]) for row in rows]
+        def _ev_time(ev):
+            return getattr(ev, "effective_available_at", None) or ev.published_at or getattr(ev, "first_seen_at", None)
+
+        usable = [(row, [ev for ev in row.evidences if (t := _ev_time(ev)) is not None and t <= cutoff]) for row in rows]
         usable = [(row, evidence) for row, evidence in usable if evidence]
         if not usable:
             return None, {"relationship_count": 0}, None, "no verified relationship evidence"
         confidences = [float(row.confidence) for row, _ in usable]
         evidence_count = sum(len(items) for _, items in usable)
-        latest = max(ev.published_at for _, items in usable for ev in items)
+        latest = max(_ev_time(ev) for _, items in usable for ev in items)
         score = sum(confidences) / len(confidences) * 80 + min(evidence_count, 10) * 2
         return clamp(score), {"relationship_count": len(usable), "evidence_count": evidence_count,
                               "mean_confidence": sum(confidences) / len(confidences)}, latest, None

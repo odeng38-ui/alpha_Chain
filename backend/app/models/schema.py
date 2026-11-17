@@ -267,7 +267,8 @@ class RelationshipEvidence(Base):
     filing_id = Column(String(14), ForeignKey("filing.rcept_no"), nullable=True, index=True)
     excerpt = Column(Text, nullable=False, comment="관계 증거 원문 발췌 텍스트")
     location = Column(String(200), nullable=True, comment="문서 내 위치 (표/단락)")
-    published_at = Column(DateTime, nullable=False)
+    published_at = Column(DateTime, nullable=True, comment="공식 원문 발행시각 (미상 시 NULL)")
+    first_seen_at = Column(DateTime, nullable=True, comment="최초 관측/확인시각")
     verification_status = Column(String(20), nullable=True, comment="NULL/proposed = unverified; verified requires explicit review")
     extractor_version = Column(String(50), default="rule_v1")
 
@@ -279,6 +280,19 @@ class RelationshipEvidence(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     relationship = orm_relationship("Relationship", back_populates="evidences")
     filing = orm_relationship("Filing", back_populates="evidences")
+
+    @property
+    def effective_available_at(self):
+        """시점 무결성을 보장하는 보수적 유효 시각 (UTC)."""
+        pub = self.published_at
+        seen = self.first_seen_at
+        if pub is not None and seen is not None:
+            return max(pub, seen)
+        if pub is not None:
+            return pub
+        if seen is not None:
+            return seen
+        return None
 
 
 class FeatureSnapshot(Base):

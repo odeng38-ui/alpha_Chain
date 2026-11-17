@@ -36,6 +36,9 @@ const statusLabels: Record<string, string> = {
   verified: '검증됨 (공급망 이력)',
   ready_for_analysis: '분석 준비 완료 (납품/수익 미확증)',
   pending_data: '데이터 보류',
+  insufficient_market_data: '시장 데이터 부족',
+  next_trading_day: '익영업일 첫 반응',
+  same_trading_day: '당일 반응',
 };
 
 const deepAnalyses = [
@@ -142,6 +145,7 @@ function CandidateCard({
   const directions = relationshipDirections(candidate, analysis);
   const price = candidate.price;
   const score = candidate.alpha_score;
+  const reaction = candidate.market_reaction;
   const isDirectLinkUnverified = candidate.project_link_status === 'unverified';
 
   return (
@@ -237,6 +241,80 @@ function CandidateCard({
                   <dd>{price.volume?.toLocaleString('ko-KR') ?? '미제공'}</dd>
                 </div>
               </dl>
+            </>
+          )}
+        </div>
+
+        <div className="ef-data-card">
+          <div className="panel-heading">
+            <div>
+              <span className="kicker">EVENT REACTION</span>
+              <h3>사건 전후 시장 반응</h3>
+            </div>
+            <CalendarClock size={18} />
+          </div>
+          {!reaction || reaction.status === 'not_available' ? (
+            <EmptyState
+              title="시장 반응 데이터 없음"
+              description="연결된 종목의 사건 전후 반응 데이터를 찾지 못했습니다."
+            />
+          ) : reaction.status === 'insufficient_market_data' ? (
+            <EmptyState
+              title="시장 데이터 부족"
+              description={reaction.causality_note || "사건 시점 전후의 거래일 데이터가 충분하지 않아 반응을 산출할 수 없습니다."}
+            />
+          ) : (
+            <>
+              <div className="ef-price">
+                <strong
+                  style={{
+                    color:
+                      (reaction.return_pct ?? 0) > 0
+                        ? '#b91c1c'
+                        : (reaction.return_pct ?? 0) < 0
+                        ? '#1d4ed8'
+                        : '#00152a',
+                  }}
+                >
+                  {reaction.return_pct !== undefined && reaction.return_pct !== null
+                    ? `${reaction.return_pct > 0 ? '+' : ''}${reaction.return_pct.toFixed(2)}%`
+                    : '—'}
+                </strong>
+                <span>{label(reaction.reaction_timing)}</span>
+              </div>
+              {(analysis.analysis_context.mode === 'fixture_demo' || candidate.is_demo) && (
+                <div className="ef-demo-data-note">
+                  ※ 로컬 데모 Fixture 데이터이며 실제 운영 DB 값이 아닙니다.
+                </div>
+              )}
+              <dl>
+                <div>
+                  <dt>사건 전 기준일</dt>
+                  <dd>{reaction.base_trade_date ?? '미상'}</dd>
+                </div>
+                <div>
+                  <dt>첫 반응 거래일</dt>
+                  <dd>{reaction.reaction_trade_date ?? '미상'}</dd>
+                </div>
+                <div>
+                  <dt>가격 변동</dt>
+                  <dd>
+                    {reaction.base_price?.toLocaleString('ko-KR') ?? '—'} →{' '}
+                    {reaction.reaction_price?.toLocaleString('ko-KR') ?? '—'}원
+                  </dd>
+                </div>
+                <div>
+                  <dt>거래량 변화율</dt>
+                  <dd>
+                    {reaction.volume_change_pct !== undefined && reaction.volume_change_pct !== null
+                      ? `${reaction.volume_change_pct > 0 ? '+' : ''}${reaction.volume_change_pct.toFixed(1)}%`
+                      : '미제공'}
+                  </dd>
+                </div>
+              </dl>
+              <p className="ef-causality-note">
+                ※ {reaction.causality_note || '본 가격·거래량 변동은 사건 시점 전후의 단순 관찰값이며 공급망 연결에 따른 직접적인 수혜 또는 인과관계를 입증하지 않습니다.'}
+              </p>
             </>
           )}
         </div>

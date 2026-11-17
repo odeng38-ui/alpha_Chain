@@ -41,6 +41,34 @@ def to_utc_datetime(
     return None
 
 
+def get_evidence_available_at(ev: RelationshipEvidence) -> Optional[datetime]:
+    """Calculate the conservative UTC availability timestamp for RelationshipEvidence.
+
+    Data rules:
+    - published_at: official publication time.
+    - first_seen_at: reliable first observation / collection time.
+    - If both exist: max(published_at, first_seen_at).
+    - If published_at is unknown (None) but first_seen_at exists: use first_seen_at.
+    - If published_at exists but first_seen_at is None: use published_at (backward compatibility).
+    - If both are missing/None: return None (evidence excluded).
+    - Timestamps are explicitly normalized to UTC.
+    """
+    pub_val = getattr(ev, "published_at", None)
+    seen_val = getattr(ev, "first_seen_at", None)
+
+    pub_utc = to_utc_datetime(pub_val) if pub_val is not None else None
+    seen_utc = to_utc_datetime(seen_val) if seen_val is not None else None
+
+    if pub_utc is not None and seen_utc is not None:
+        return max(pub_utc, seen_utc)
+    if pub_utc is not None:
+        return pub_utc
+    if seen_utc is not None:
+        return seen_utc
+    return None
+
+
+
 @dataclass
 class NormalizedSupplyEdge:
     supplier_id: int
@@ -140,7 +168,7 @@ class SupplyChainService:
         if rel.valid_to is not None and rel.valid_to < as_of_date:
             return None
 
-        # 5. Evidence check: must have at least 1 valid evidence published at or before as_of
+        # 5. Evidence check: must have at least 1 valid evidence available at or before as_of
         evidences = getattr(rel, "evidences", None) or []
         valid_evidences: List[RelationshipEvidence] = []
 
@@ -148,38 +176,22 @@ class SupplyChainService:
             # Relationship approval never implicitly approves individual evidence.
             if ev.verification_status != "verified":
                 continue
-            if ev.published_at is None:
-                continue
-            ev_pub_utc = to_utc_datetime(ev.published_at)
-            if ev_pub_utc is None:
+
+            ev_avail_utc = get_evidence_available_at(ev)
+            if ev_avail_utc is None:
                 continue
 
-            # Conservative check for date-only evidence (time component is 00:00:00)
-            if conservative_date_only and (
-                ev.published_at.hour == 0
-                and ev.published_at.minute == 0
-                and ev.published_at.second == 0
-                and ev.published_at.microsecond == 0
-            ):
-                # If as_of is strictly on a later day, evidence is definitely published
-                if as_of_date > ev.published_at.date():
-                    valid_evidences.append(ev)
-                elif as_of_date == ev.published_at.date():
-                    # Available at end of that date
-                    ev_available_utc = datetime.combine(
-                        ev.published_at.date(), time.max
-                    ).replace(tzinfo=timezone.utc)
-                    if as_of_utc >= ev_available_utc:
-                        valid_evidences.append(ev)
-                # If as_of is on the same day before end of day, conservative treatment excludes it
-            else:
-                if ev_pub_utc <= as_of_utc:
-                    valid_evidences.append(ev)
+            # Point-in-time check: Do not infer date precision merely because time is midnight.
+            if ev_avail_utc <= as_of_utc:
+                valid_evidences.append(ev)
 
         if not valid_evidences:
             return None
 
-        latest_pub = max(to_utc_datetime(ev.published_at) for ev in valid_evidences)
+        latest_pub = max(
+            get_evidence_available_at(ev) or datetime.min.replace(tzinfo=timezone.utc)
+            for ev in valid_evidences
+        )
 
         return NormalizedSupplyEdge(
             supplier_id=supplier_id,

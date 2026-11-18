@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     SEC_USER_AGENT: str = os.getenv("SEC_USER_AGENT", "AlphaChain/1.0 (contact@alphachain.org)")
     SEC_RATE_LIMIT_PER_SEC: float = float(os.getenv("SEC_RATE_LIMIT_PER_SEC", "10.0"))
     SEC_TIMEOUT_SEC: float = float(os.getenv("SEC_TIMEOUT_SEC", "10.0"))
+    NEON_API_KEY: str = os.getenv("NEON_API_KEY", "")
+    NEON_PROJECT_ID: str = os.getenv("NEON_PROJECT_ID", "")
+    GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
+    GITHUB_REPOSITORY: str = os.getenv("GITHUB_REPOSITORY", "odeng38-ui/alpha_Chain")
+    VERCEL_TOKEN: str = os.getenv("VERCEL_TOKEN", "")
+    VERCEL_PROJECT_ID: str = os.getenv("VERCEL_PROJECT_ID", "")
+    NEON_PROTECTED_BRANCHES: str = os.getenv("NEON_PROTECTED_BRANCHES", "main,production,staging")
 
     model_config = SettingsConfigDict(
         case_sensitive=True,
@@ -80,6 +87,10 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Return the explicit browser origins allowed to call the API."""
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def neon_protected_branch_list(self) -> list[str]:
+        return [b.strip() for b in self.NEON_PROTECTED_BRANCHES.split(",") if b.strip()]
 
 
 settings = Settings()

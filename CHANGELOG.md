@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-11-18
+- AC-ADMIN-NBCA-01: Neon Branch Cleanup Advisor 구현 (Neon 브랜치·GitHub PR·Vercel 배포 3자 대조, PROTECTED/REVIEW_REQUIRED/DELETE_CANDIDATE 3단계 안전 판정, 관리자 전용 분석 API 및 9개 격리 테스트 통과).
+
 ## 2026-11-17
 - CORE-EVIDENCE-03: 관리자 전용 SEC 단건 수집 API(`POST /api/v1/sec/ingest-one`), zero-write dry-run 및 실제 SEC EDGAR 조회 연동 완료.
 - CORE-EVIDENCE-02 (Phase 2): SEC EDGAR 공식 공시 어댑터(`SecEdgarAdapter`), 단건 수집 서비스(`SecFilingService`), dry-run 지원 및 11개 격리 테스트 구현 완료.

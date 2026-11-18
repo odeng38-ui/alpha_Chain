@@ -152,6 +152,21 @@ class EventFirstQueryService:
             for relationship in path.get("relationships", ())
             for item in relationship.get("evidence", ())
         ]
+        # Stored B4 candidates are only emitted after the US event/anchor gates
+        # and verified supply-chain paths pass. Do not replace that evidence
+        # with an unconditional 'pending' label when the row omits UI statuses.
+        verified_chain = bool(paths) and all(
+            path.get("relationships")
+            and all(
+                relationship.get("verification_status") == "verified"
+                and any(
+                    item.get("verification_status") == "verified"
+                    for item in relationship.get("evidence", ())
+                )
+                for relationship in path["relationships"]
+            )
+            for path in paths
+        )
         depth = min((path.get("tier") for path in paths if path.get("tier") is not None), default=None)
         security_id = security.get("security_id") if security else None
         return {
@@ -163,12 +178,15 @@ class EventFirstQueryService:
             "relationship_depth": depth,
             "classification": row.get("classification", "supply_chain_candidate"),
             "eligibility_status": row.get(
-                "eligibility_status", "pending_event_anchor_verification"
+                "eligibility_status",
+                "verified_supply_chain_candidate" if verified_chain else "pending_event_anchor_verification",
             ),
             "project_link_status": row.get("project_link_status", "unverified"),
             "valid_from": row.get("valid_from"),
             "valid_to": row.get("valid_to"),
-            "evidence_status": row.get("evidence_status", "not_available"),
+            "evidence_status": row.get(
+                "evidence_status", "verified" if verified_chain else "not_available"
+            ),
             "evidence": evidence or row.get("evidence", []),
             "paths": paths,
             "price": self._price(db, security_id, as_of),

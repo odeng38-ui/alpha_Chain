@@ -29,6 +29,7 @@ const statusLabels: Record<string, string> = {
   not_available: '데이터 없음',
   not_computed: '점수 미계산',
   pending_event_anchor_verification: '이벤트·앵커 검증 대기',
+  verified_supply_chain_candidate: '검증된 공급망 후보 (직접 납품 미확인)',
   unverified: '미확인 (직접 납품 미증명)',
   available_after_collection: '수집 이후 사용 가능',
   not_requested: '분석 전',

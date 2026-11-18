@@ -157,15 +157,21 @@
   - 운영 DB 쓰기/마이그레이션/Worker/Cron 실행 없음.
   - Vercel 배포/GitHub Push/PR/main 병합 없음.
 
-## AC-KIS-P2.1: Phase 2 인증 및 데이터 표시 최종 점검 (실전/데모 엄격 분리)
+## AC-KIS-P2.1: Phase 2 관리자 인증 연결 및 실전 시세 세션 프록시 구축
 
-- 작업: 실제 KIS 시세와 데모 데이터의 자동 대체(silent fallback) 제거, 명시적 데모 모드(`DEMO · 실제 시세 아님`) 전환 분리, 서버 Route Handler 웹 인증 구조 분석.
+- 작업: 기존 Phase 2 차트 기능을 유지하면서 관리자 1인 로그인 세션을 통해 실제 KIS 시세를 안전하게 조회할 수 있도록 구현.
 - 결과:
-  1. `frontend/src/lib/api.ts`: 401/네트워크 에러 시 `getMockQuote`/`getMockHistorical` 자동 반환 제거. `options.demo === true`일 때만 명시적 모의 데이터 반환하고 실전 요청 오류는 그대로 전파.
-  2. `frontend/src/app/api/kis/quotes/[ticker]/route.ts` & `history/route.ts`: 비인가 브라우저의 실전 시세 조회 시 401(ADMIN_AUTH_REQUIRED) 명시 차단.
-  3. `frontend/src/components/stock-chart-panel.tsx`: `real` vs `demo` 모드 명시적 분리. 데모 모드 시 `DEMO · 실제 시세 아님` 배지 표시, 실전 조회 성공 시 `출처: KIS 실측 시세` 표시. 실전 오류 발생 시 자동 대체 없이 에러 원인 안내 및 "시연용 데모 데이터로 보기" 버튼 제공.
-  4. 웹사이트 인증 구조 진단: 현재 Next.js에는 세션 쿠키나 로그인 메커니즘이 부재하므로, 공개 브라우저 환경에서 임의의 관리자 키 자동 주입 시 보안상 KIS Open API가 외부에 무단 노출될 위험이 있음을 확인. 최소 해결책(HttpOnly 세션 쿠키 또는 사용자 인증 레이어) 분석 보고 준비.
+  1. `frontend/src/lib/server-auth.ts`: 관리자 비밀번호 검증(SHA-256 해시 대조 및 timingSafeEqual), 서버리스 안전 무상태 HMAC-SHA256 서명 세션 토큰 생성/검증, HttpOnly/SameSite=Lax/Secure 쿠키 설정, Origin CSRF 방어, 인메모리 슬라이딩 윈도우 로그인 시도 제한(15분 내 5회 제한).
+  2. `frontend/src/app/api/auth/login/route.ts`, `logout/route.ts`, `session/route.ts`: 관리자 로그인(POST), 로그아웃(POST), 세션 상태 조회(GET) 엔드포인트 구현.
+  3. `frontend/src/app/api/kis/quotes/[ticker]/route.ts` & `history/route.ts`: 브라우저의 HttpOnly 관리자 세션 쿠키 검증 연동. 인증 성공 시에만 서버 전용 `ADMIN_API_KEY`를 주입하여 백엔드 KIS API로 대리 호출하고, 미인증 시 401(ADMIN_AUTH_REQUIRED) 반환. 브라우저로 인증 정보 비노출 유지.
+  4. `frontend/src/lib/api.ts`: 클라이언트 인증 함수(`checkAdminSession`, `adminLogin`, `adminLogout`) 및 실전 에러 전파 처리.
+  5. `frontend/src/components/stock-chart-panel.tsx`: 차트 상단 관리자 인증 상태 표시(`관리자 인증됨` / `관리자 로그인` 버튼), 401 오류 시 인라인 관리자 로그인 폼 제공, 로그인 완료 시 실전 시세 즉시 재조회 및 로그아웃 기능 연동.
 - 검증:
-  - `node tests/test-chart-panel-render.cjs`: 실전 시세 정상 표시, 명시적 데모 모드 배지, 실전 오류 시 자동 대체 차단(No silent fallback) 등 6개 SSR 케이스 전체 통과.
-  - `node tests/core-integration-02-render.cjs`, `core-dashboard-01-render.cjs`, `test-moving-average.cjs`: 전체 통과.
-  - `npx tsc --noEmit`: 0 errors 통과.
+  - `node tests/test-admin-auth.cjs`: 비밀번호 해시 검증, 서명 검증, 세션 위조/만료 차단, 속도 제한, CSRF Origin 검사, 미인증 401 차단, 명시적 데모 응답, 세션 기반 실전 KIS 프록시 정상 동작 등 11개 단위/통합 테스트 전체 통과 (100%).
+  - `node tests/test-chart-panel-render.cjs`: 6개 SSR 렌더링 상태 전체 통과 (100%).
+  - `node tests/test-moving-average.cjs`, `core-integration-02-render.cjs`, `core-dashboard-01-render.cjs`: 전체 통과 (회귀 없음).
+  - `npx tsc --noEmit`: 0 errors (TypeScript 컴파일 무오류 통과).
+- 보안 및 운영 상태:
+  - 브라우저에 KIS App Key/Secret 및 Admin Key 노출 없음 (NEXT_PUBLIC 미사용, HttpOnly 쿠키).
+  - 운영 DB 쓰기/마이그레이션/Worker/Cron 실행 없음.
+  - Vercel 배포/GitHub Push/PR/main 병합 없음.

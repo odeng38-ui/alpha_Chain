@@ -79,3 +79,39 @@ export async function getKisHistoricalQuotes(
   }
   return (await res.json()) as KisHistoricalQuotesData;
 }
+
+export async function checkAdminSession(): Promise<{ authenticated: boolean; role?: string | null }> {
+  try {
+    const res = await fetch('/api/auth/session', { cache: 'no-store' });
+    if (!res.ok) return { authenticated: false };
+    return (await res.json()) as { authenticated: boolean; role?: string | null };
+  } catch {
+    return { authenticated: false };
+  }
+}
+
+export async function adminLogin(password: string): Promise<{ success: boolean; detail?: string }> {
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { success: false, detail: err.detail ?? '로그인에 실패했습니다.' };
+    }
+    return { success: true };
+  } catch {
+    return { success: false, detail: '로그인 요청 중 네트워크 오류가 발생했습니다.' };
+  }
+}
+
+export async function adminLogout(): Promise<{ success: boolean }> {
+  try {
+    const res = await fetch('/api/auth/logout', { method: 'POST' });
+    return { success: res.ok };
+  } catch {
+    return { success: false };
+  }
+}

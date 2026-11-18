@@ -3,13 +3,15 @@
  *
  * Security Requirements:
  * 1. Validates 6-digit Korean stock ticker format.
- * 2. Injects internal credentials server-side only; never leaks secrets to browser bundle.
- * 3. Enforces authorization: unauthenticated requests cannot access raw live broker API.
- * 4. Supports explicit demo mode for development/preview.
+ * 2. Authenticates browser caller via cryptographically verified HttpOnly admin session cookie (or X-Admin-Key header).
+ * 3. Injects server-side ADMIN_API_KEY only upon verified authentication; never leaks secrets to client.
+ * 4. Supports explicit demo mode for preview.
+ * 5. Returns 401 BLOCKED for unauthenticated requests.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getMockQuote } from '@/lib/kis-mock-data';
+import { ADMIN_COOKIE_NAME, verifySessionToken } from '@/lib/server-auth';
 
 const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:8000';
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
@@ -36,23 +38,34 @@ export async function GET(
     return NextResponse.json(getMockQuote(ticker));
   }
 
-  // 3. Security check: verify caller authentication
-  // In the absence of an authenticated user session cookie or admin header, block public live broker access.
-  const incomingAdminKey = request.headers.get('X-Admin-Key');
-  const effectiveKey = incomingAdminKey || (process.env.NODE_ENV === 'development' ? ADMIN_API_KEY : null);
+  // 3. Security check: verify admin session cookie or administrative header
+  const sessionToken = request.cookies.get(ADMIN_COOKIE_NAME)?.value;
+  const sessionCheck = verifySessionToken(sessionToken);
 
-  if (!effectiveKey) {
+  const headerAdminKey = request.headers.get('X-Admin-Key');
+  const isAuthorized = sessionCheck.valid || (headerAdminKey && ADMIN_API_KEY && headerAdminKey === ADMIN_API_KEY);
+
+  if (!isAuthorized) {
     return NextResponse.json(
       {
-        detail: 'KIS 실전 시세 조회를 위해서는 인증된 사용자 세션(관리자 권한)이 필요합니다.',
+        detail: 'KIS 실전 시세 조회를 위해서는 관리자 로그인이 필요합니다.',
         code: 'ADMIN_AUTH_REQUIRED',
         status: 'BLOCKED',
+        reason: sessionCheck.reason ?? '관리자 인증 세션이 없습니다.',
       },
       { status: 401 }
     );
   }
 
-  // 4. Secure server-to-server proxy with private X-Admin-Key
+  // 4. Ensure server-side backend admin key is configured
+  if (!ADMIN_API_KEY) {
+    return NextResponse.json(
+      { detail: '서버 환경에 백엔드 KIS 연동 키(ADMIN_API_KEY)가 구성되지 않았습니다.' },
+      { status: 503 }
+    );
+  }
+
+  // 5. Secure server-to-server proxy with private X-Admin-Key
   const targetUrl = new URL(`/api/v1/kis/quotes/${ticker}`, BACKEND_URL);
   const bypassCache = searchParams.get('bypass_cache') === 'true';
   if (bypassCache) {
@@ -64,7 +77,7 @@ export async function GET(
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'X-Admin-Key': effectiveKey,
+        'X-Admin-Key': ADMIN_API_KEY,
       },
       cache: 'no-store',
     });

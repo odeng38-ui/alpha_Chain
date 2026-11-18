@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-18
+- AC-KIS-P2.1: Phase 2 실전 KIS 데이터와 데모 모드 엄격 분리 (실전 오류 시 데모 자동 대체 제거, `DEMO · 실제 시세 아님` 명시 배지, 실전 오류 시 안내 및 사용자 선택 전환 지원, Next.js 웹사이트 인증 구조 진단).
 - AC-KIS-P2: 한국투자증권(KIS) 시세 기반 캔들차트, 이동평균선(SMA 5/10/20/60/120), 거래량 히스토그램 및 EVENT-FIRST 대시보드 연동 구현.
   - SVG 기반 고성능 반응형 캔들차트 및 거래량 차트 컴포넌트(`StockCandlestickChart`, `StockVolumeChart`, `StockChartPanel`) 구현.
   - 일봉(D)·주봉(W)·월봉(M) 주기 전환, SMA 5·10·20·60·120 개별 토글 및 십자선/툴팁/터치 인스펙터 지원.

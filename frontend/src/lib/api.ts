@@ -39,27 +39,22 @@ export async function getKisCurrentQuote(
   ticker: string,
   options: { demo?: boolean; bypassCache?: boolean } = {}
 ): Promise<KisCurrentQuoteData> {
+  if (options.demo) {
+    return getMockQuote(ticker);
+  }
+
   const params = new URLSearchParams();
-  if (options.demo) params.set('demo', 'true');
   if (options.bypassCache) params.set('bypass_cache', 'true');
   const query = params.toString() ? `?${params.toString()}` : '';
 
-  try {
-    const res = await fetch(`/api/kis/quotes/${encodeURIComponent(ticker)}${query}`, {
-      cache: 'no-store',
-    });
-    if (!res.ok) {
-      if (res.status === 401) {
-        return getMockQuote(ticker);
-      }
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail ?? `시세 조회 실패 (${res.status})`);
-    }
-    return (await res.json()) as KisCurrentQuoteData;
-  } catch (e) {
-    if (options.demo) return getMockQuote(ticker);
-    throw e;
+  const res = await fetch(`/api/kis/quotes/${encodeURIComponent(ticker)}${query}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `실전 시세 조회 실패 (${res.status})`);
   }
+  return (await res.json()) as KisCurrentQuoteData;
 }
 
 export async function getKisHistoricalQuotes(
@@ -67,25 +62,20 @@ export async function getKisHistoricalQuotes(
   period: CandlePeriod = 'D',
   options: { demo?: boolean; adjust?: boolean } = {}
 ): Promise<KisHistoricalQuotesData> {
+  if (options.demo) {
+    return getMockHistorical(ticker, period);
+  }
+
   const params = new URLSearchParams({ period });
-  if (options.demo) params.set('demo', 'true');
   if (options.adjust !== undefined) params.set('adjust', String(options.adjust));
   const query = params.toString() ? `?${params.toString()}` : '';
 
-  try {
-    const res = await fetch(`/api/kis/quotes/${encodeURIComponent(ticker)}/history${query}`, {
-      cache: 'no-store',
-    });
-    if (!res.ok) {
-      if (res.status === 401) {
-        return getMockHistorical(ticker, period);
-      }
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail ?? `과거 캔들 조회 실패 (${res.status})`);
-    }
-    return (await res.json()) as KisHistoricalQuotesData;
-  } catch (e) {
-    if (options.demo) return getMockHistorical(ticker, period);
-    throw e;
+  const res = await fetch(`/api/kis/quotes/${encodeURIComponent(ticker)}/history${query}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `과거 캔들 조회 실패 (${res.status})`);
   }
+  return (await res.json()) as KisHistoricalQuotesData;
 }

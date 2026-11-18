@@ -3,9 +3,9 @@
  *
  * Security Requirements:
  * 1. Validates 6-digit Korean stock ticker format and period ('D', 'W', 'M').
- * 2. Injects internal ADMIN_API_KEY server-side only; never leaks to browser bundle.
+ * 2. Injects internal credentials server-side only; never leaks secrets to browser bundle.
  * 3. Enforces authorization: unauthenticated requests cannot access raw live broker API.
- * 4. Supports safe demo mode fallback for unauthenticated preview.
+ * 4. Supports explicit demo mode for development/preview.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -41,20 +41,20 @@ export async function GET(
 
   const isDemo = searchParams.get('demo') === 'true';
 
-  // 2. Demo mode request -> return verified demonstration historical candles
+  // 2. Explicit demo mode request -> return verified demonstration historical candles
   if (isDemo) {
     return NextResponse.json(getMockHistorical(ticker, period));
   }
 
-  // 3. Security check: caller admin auth or server ADMIN_API_KEY
+  // 3. Security check: verify caller authentication
+  // In the absence of an authenticated user session cookie or admin header, block public live broker access.
   const incomingAdminKey = request.headers.get('X-Admin-Key');
-  const effectiveAdminKey = incomingAdminKey || ADMIN_API_KEY;
+  const effectiveKey = incomingAdminKey || (process.env.NODE_ENV === 'development' ? ADMIN_API_KEY : null);
 
-  if (!effectiveAdminKey) {
-    // Per Section 6: When secure authenticated user session is missing, do not open public unauthenticated proxy.
+  if (!effectiveKey) {
     return NextResponse.json(
       {
-        detail: 'KIS 과거 캔들 조회를 위해서는 관리자 인증(ADMIN_API_KEY)이 필요합니다.',
+        detail: 'KIS 과거 캔들 조회를 위해서는 인증된 사용자 세션(관리자 권한)이 필요합니다.',
         code: 'ADMIN_AUTH_REQUIRED',
         status: 'BLOCKED',
       },
@@ -83,7 +83,7 @@ export async function GET(
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'X-Admin-Key': effectiveAdminKey,
+        'X-Admin-Key': effectiveKey,
       },
       cache: 'no-store',
     });
@@ -97,7 +97,7 @@ export async function GET(
     }
 
     const data = await backendRes.json();
-    return NextResponse.json(data);
+    return NextResponse.json({ ...data, is_demo: false });
   } catch {
     return NextResponse.json(
       { detail: '백엔드 KIS 시세 서비스에 연결할 수 없습니다.' },

@@ -33,6 +33,7 @@ interface StockChartPanelProps {
   ticker: string;
   companyName: string;
   market?: string;
+  initialMode?: 'real' | 'demo';
   onClose?: () => void;
 }
 
@@ -40,8 +41,10 @@ export function StockChartPanel({
   ticker,
   companyName,
   market = 'KOSPI',
+  initialMode = 'real',
   onClose,
 }: StockChartPanelProps) {
+  const [chartMode, setChartMode] = useState<'real' | 'demo'>(initialMode);
   const [period, setPeriod] = useState<CandlePeriod>('D');
   const [smaConfig, setSmaConfig] = useState<SMAConfig>(DEFAULT_SMA_CONFIG);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -59,8 +62,9 @@ export function StockChartPanel({
   useEffect(() => {
     let active = true;
     setQuoteStatus('loading');
+    setErrorMessage('');
 
-    getKisCurrentQuote(ticker)
+    getKisCurrentQuote(ticker, { demo: chartMode === 'demo' })
       .then((data) => {
         if (!active) return;
         setQuote(data);
@@ -68,6 +72,7 @@ export function StockChartPanel({
       })
       .catch((err) => {
         if (!active) return;
+        setQuote(null);
         setQuoteStatus('error');
         setErrorMessage(err instanceof Error ? err.message : '현재가 조회 실패');
       });
@@ -75,7 +80,7 @@ export function StockChartPanel({
     return () => {
       active = false;
     };
-  }, [ticker, reloadTrigger]);
+  }, [ticker, chartMode, reloadTrigger]);
 
   // Fetch Historical Candles
   useEffect(() => {
@@ -83,7 +88,7 @@ export function StockChartPanel({
     setHistoryStatus('loading');
     setSelectedIndex(null);
 
-    getKisHistoricalQuotes(ticker, period)
+    getKisHistoricalQuotes(ticker, period, { demo: chartMode === 'demo' })
       .then((data) => {
         if (!active) return;
         setHistory(data);
@@ -95,6 +100,7 @@ export function StockChartPanel({
       })
       .catch((err) => {
         if (!active) return;
+        setHistory(null);
         setHistoryStatus('error');
         setErrorMessage(err instanceof Error ? err.message : '과거 캔들 조회 실패');
       });
@@ -102,7 +108,7 @@ export function StockChartPanel({
     return () => {
       active = false;
     };
-  }, [ticker, period, reloadTrigger]);
+  }, [ticker, period, chartMode, reloadTrigger]);
 
   // Calculate SMAs for all available periods
   const candles = useMemo(() => history?.candles ?? [], [history]);
@@ -126,7 +132,7 @@ export function StockChartPanel({
     if (selectedIndex !== null && candles[selectedIndex]) {
       return candles[selectedIndex];
     }
-    // Default to the latest candle if none hovered
+    // Default to latest candle if none hovered
     return candles[candles.length - 1];
   }, [candles, selectedIndex]);
 
@@ -140,8 +146,8 @@ export function StockChartPanel({
   const changeColor = isUp ? 'text-red-600' : isDown ? 'text-blue-600' : 'text-slate-700';
 
   const isLoading = quoteStatus === 'loading' || historyStatus === 'loading';
-  const hasError = quoteStatus === 'error' && historyStatus === 'error';
-  const isDemoMode = quote?.is_demo || history?.is_demo;
+  const hasError = quoteStatus === 'error' || historyStatus === 'error';
+  const isDemo = chartMode === 'demo' || quote?.is_demo === true || history?.is_demo === true;
 
   return (
     <section className="stock-chart-panel panel border border-slate-200 bg-white shadow-sm rounded-lg p-5 mb-6 text-slate-800">
@@ -155,12 +161,13 @@ export function StockChartPanel({
             <span className="text-xs font-mono font-medium text-slate-500">
               {ticker}
             </span>
-            <span className="text-xs px-2 py-0.5 rounded font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-              출처: KIS
-            </span>
-            {isDemoMode && (
-              <span className="text-xs px-2 py-0.5 rounded font-medium bg-amber-50 text-amber-700 border border-amber-200">
-                데모/모의 시세
+            {isDemo ? (
+              <span className="text-xs px-2.5 py-0.5 rounded font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                DEMO · 실제 시세 아님
+              </span>
+            ) : (
+              <span className="text-xs px-2.5 py-0.5 rounded font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                출처: KIS 실측 시세
               </span>
             )}
           </div>
@@ -171,7 +178,29 @@ export function StockChartPanel({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
+          {/* Mode Switcher */}
+          {chartMode === 'real' ? (
+            <button
+              type="button"
+              onClick={() => setChartMode('demo')}
+              className="text-xs font-medium px-2.5 py-1.5 rounded border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 transition"
+              title="시연용 데모 모드로 전환"
+            >
+              데모 모드로 전환
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setChartMode('real')}
+              className="text-xs font-medium px-2.5 py-1.5 rounded border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 transition"
+              title="실전 KIS 시세 모드로 전환"
+            >
+              실전 시세로 전환
+            </button>
+          )}
+
           <button
+            type="button"
             onClick={handleRefresh}
             disabled={isLoading}
             className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded border border-slate-300 hover:bg-slate-50 transition text-slate-700 disabled:opacity-50"
@@ -182,6 +211,7 @@ export function StockChartPanel({
           </button>
           {onClose && (
             <button
+              type="button"
               onClick={onClose}
               className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition"
               title="차트 닫기"
@@ -245,6 +275,7 @@ export function StockChartPanel({
             return (
               <button
                 key={p}
+                type="button"
                 onClick={() => setPeriod(p)}
                 className={`px-3 py-1 font-semibold rounded transition ${
                   active
@@ -346,16 +377,37 @@ export function StockChartPanel({
       <div className="mt-2 min-h-[360px] flex flex-col justify-center">
         {historyStatus === 'loading' && (
           <div className="py-20 flex justify-center items-center">
-            <LoadingState label="KIS 과거 캔들 데이터를 불러오는 중입니다..." />
+            <LoadingState label="시세 데이터를 불러오는 중입니다..." />
           </div>
         )}
 
         {historyStatus === 'error' && (
-          <div className="py-12">
-            <ErrorState
-              message={errorMessage || '시세 캔들 데이터를 불러올 수 없습니다.'}
-              retry={handleRefresh}
-            />
+          <div className="py-12 flex justify-center items-center">
+            <div className="p-5 rounded-lg bg-red-50 border border-red-200 text-red-800 max-w-md w-full text-center">
+              <div className="flex items-center justify-center gap-2 font-semibold mb-1">
+                <AlertCircle size={18} className="text-red-600" />
+                <span>시세 조회 실패</span>
+              </div>
+              <p className="text-xs text-red-700 mb-4">{errorMessage || '시세 캔들 데이터를 불러올 수 없습니다.'}</p>
+              <div className="flex justify-center gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  className="px-3 py-1.5 rounded bg-white border border-red-300 hover:bg-red-50 text-red-800 font-medium transition"
+                >
+                  재시도
+                </button>
+                {chartMode === 'real' && (
+                  <button
+                    type="button"
+                    onClick={() => setChartMode('demo')}
+                    className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-700 text-white font-medium transition"
+                  >
+                    시연용 데모 데이터로 보기
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
@@ -393,7 +445,9 @@ export function StockChartPanel({
       {/* 6. Legal & Technical Disclaimer Footer */}
       <div className="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-400 space-y-0.5">
         <p>
-          ※ 본 차트는 한국투자증권(KIS) Open API 기반 온디맨드 시세 조회 데이터입니다.
+          {isDemo
+            ? '※ 본 화면은 시연용 모의 데이터(DEMO)입니다. 실제 투자 판단의 근거로 사용할 수 없습니다.'
+            : '※ 본 차트는 한국투자증권(KIS) Open API 기반 온디맨드 시세 조회 데이터입니다.'}
         </p>
         <p>
           ※ 과거 캔들은 수정주가 기준이며, 이동평균선(SMA)은 선택 주기의 종가 기준 단순이동평균입니다 (데이터 부족 시 미표시).

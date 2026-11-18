@@ -156,3 +156,16 @@
   - 브라우저에 KIS App Key/Secret 및 Admin Key 노출 없음 (NEXT_PUBLIC 미사용).
   - 운영 DB 쓰기/마이그레이션/Worker/Cron 실행 없음.
   - Vercel 배포/GitHub Push/PR/main 병합 없음.
+
+## AC-KIS-P2.1: Phase 2 인증 및 데이터 표시 최종 점검 (실전/데모 엄격 분리)
+
+- 작업: 실제 KIS 시세와 데모 데이터의 자동 대체(silent fallback) 제거, 명시적 데모 모드(`DEMO · 실제 시세 아님`) 전환 분리, 서버 Route Handler 웹 인증 구조 분석.
+- 결과:
+  1. `frontend/src/lib/api.ts`: 401/네트워크 에러 시 `getMockQuote`/`getMockHistorical` 자동 반환 제거. `options.demo === true`일 때만 명시적 모의 데이터 반환하고 실전 요청 오류는 그대로 전파.
+  2. `frontend/src/app/api/kis/quotes/[ticker]/route.ts` & `history/route.ts`: 비인가 브라우저의 실전 시세 조회 시 401(ADMIN_AUTH_REQUIRED) 명시 차단.
+  3. `frontend/src/components/stock-chart-panel.tsx`: `real` vs `demo` 모드 명시적 분리. 데모 모드 시 `DEMO · 실제 시세 아님` 배지 표시, 실전 조회 성공 시 `출처: KIS 실측 시세` 표시. 실전 오류 발생 시 자동 대체 없이 에러 원인 안내 및 "시연용 데모 데이터로 보기" 버튼 제공.
+  4. 웹사이트 인증 구조 진단: 현재 Next.js에는 세션 쿠키나 로그인 메커니즘이 부재하므로, 공개 브라우저 환경에서 임의의 관리자 키 자동 주입 시 보안상 KIS Open API가 외부에 무단 노출될 위험이 있음을 확인. 최소 해결책(HttpOnly 세션 쿠키 또는 사용자 인증 레이어) 분석 보고 준비.
+- 검증:
+  - `node tests/test-chart-panel-render.cjs`: 실전 시세 정상 표시, 명시적 데모 모드 배지, 실전 오류 시 자동 대체 차단(No silent fallback) 등 6개 SSR 케이스 전체 통과.
+  - `node tests/core-integration-02-render.cjs`, `core-dashboard-01-render.cjs`, `test-moving-average.cjs`: 전체 통과.
+  - `npx tsc --noEmit`: 0 errors 통과.

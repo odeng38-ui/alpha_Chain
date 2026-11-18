@@ -67,29 +67,31 @@ console.log('  -> StockVolumeChart PASSED.');
 console.log('Testing StockChartPanel SSR rendering...');
 const originals = { useState: React.useState, useEffect: React.useEffect, useMemo: React.useMemo };
 
-function renderPanelWithStates(quoteData, historyData, qStatus, hStatus) {
+function renderPanelWithStates(mode, quoteData, historyData, qStatus, hStatus, errMsg = '') {
   let callCount = 0;
   // Panel hooks:
-  // 0: period ('D')
-  // 1: smaConfig (DEFAULT_SMA_CONFIG)
-  // 2: selectedIndex (null)
-  // 3: quote (quoteData)
-  // 4: history (historyData)
-  // 5: quoteStatus (qStatus)
-  // 6: historyStatus (hStatus)
-  // 7: errorMessage ('')
-  // 8: reloadTrigger (0)
+  // 0: chartMode ('real' | 'demo')
+  // 1: period ('D')
+  // 2: smaConfig (DEFAULT_SMA_CONFIG)
+  // 3: selectedIndex (null)
+  // 4: quote (quoteData)
+  // 5: history (historyData)
+  // 6: quoteStatus (qStatus)
+  // 7: historyStatus (hStatus)
+  // 8: errorMessage (errMsg)
+  // 9: reloadTrigger (0)
   React.useState = (initial) => {
     const idx = callCount++;
-    if (idx === 0) return ['D', () => {}];
-    if (idx === 1) return [DEFAULT_SMA_CONFIG, () => {}];
-    if (idx === 2) return [null, () => {}];
-    if (idx === 3) return [quoteData, () => {}];
-    if (idx === 4) return [historyData, () => {}];
-    if (idx === 5) return [qStatus, () => {}];
-    if (idx === 6) return [hStatus, () => {}];
-    if (idx === 7) return ['', () => {}];
-    if (idx === 8) return [0, () => {}];
+    if (idx === 0) return [mode, () => {}];
+    if (idx === 1) return ['D', () => {}];
+    if (idx === 2) return [DEFAULT_SMA_CONFIG, () => {}];
+    if (idx === 3) return [null, () => {}];
+    if (idx === 4) return [quoteData, () => {}];
+    if (idx === 5) return [historyData, () => {}];
+    if (idx === 6) return [qStatus, () => {}];
+    if (idx === 7) return [hStatus, () => {}];
+    if (idx === 8) return [errMsg, () => {}];
+    if (idx === 9) return [0, () => {}];
     return [initial, () => {}];
   };
   React.useEffect = () => {};
@@ -100,6 +102,7 @@ function renderPanelWithStates(quoteData, historyData, qStatus, hStatus) {
         ticker: '042700',
         companyName: '한미반도체',
         market: 'KOSPI',
+        initialMode: mode,
         onClose: () => {},
       })
     );
@@ -108,39 +111,74 @@ function renderPanelWithStates(quoteData, historyData, qStatus, hStatus) {
   }
 }
 
-// Case 1: Populated chart state
-const populatedHtml = renderPanelWithStates(
-  HANMI_DEMO_QUOTE,
-  { ticker: '042700', period: 'D', count: HANMI_DAILY_CANDLES.length, candles: HANMI_DAILY_CANDLES, status: 'success', start_date: '2026-10-07', end_date: '2026-11-18' },
+// Case 1: Populated real quote state (is_demo: false)
+const realQuoteData = { ...HANMI_DEMO_QUOTE, is_demo: false };
+const realHistoryData = {
+  ticker: '042700',
+  period: 'D',
+  count: HANMI_DAILY_CANDLES.length,
+  candles: HANMI_DAILY_CANDLES,
+  status: 'success',
+  start_date: '2026-10-07',
+  end_date: '2026-11-18',
+  is_demo: false,
+};
+
+const populatedRealHtml = renderPanelWithStates(
+  'real',
+  realQuoteData,
+  realHistoryData,
   'success',
   'success'
 );
-assert.match(populatedHtml, /한미반도체/);
-assert.match(populatedHtml, /042700/);
-assert.match(populatedHtml, /출처: KIS/);
-assert.match(populatedHtml, /168,200/); // Price formatted
-assert.match(populatedHtml, /일봉 \(D\)/);
-assert.match(populatedHtml, /주봉 \(W\)/);
-assert.match(populatedHtml, /월봉 \(M\)/);
-assert.match(populatedHtml, /MA5/);
-assert.match(populatedHtml, /MA10/);
-assert.match(populatedHtml, /MA20/);
-assert.match(populatedHtml, /MA60/);
-assert.match(populatedHtml, /MA120/);
-assert.match(populatedHtml, /한국투자증권\(KIS\) Open API 기반 온디맨드 시세 조회/);
-console.log('  -> Populated StockChartPanel PASSED.');
+assert.match(populatedRealHtml, /한미반도체/);
+assert.match(populatedRealHtml, /042700/);
+assert.match(populatedRealHtml, /출처: KIS 실측 시세/);
+assert.doesNotMatch(populatedRealHtml, /DEMO · 실제 시세 아님/);
+assert.match(populatedRealHtml, /168,200/);
+assert.match(populatedRealHtml, /일봉 \(D\)/);
+assert.match(populatedRealHtml, /MA5/);
+console.log('  -> Populated Real StockChartPanel PASSED.');
 
-// Case 2: Loading state
-const loadingHtml = renderPanelWithStates(null, null, 'loading', 'loading');
+// Case 2: Explicit demo mode
+const demoHtml = renderPanelWithStates(
+  'demo',
+  HANMI_DEMO_QUOTE,
+  { ...realHistoryData, is_demo: true },
+  'success',
+  'success'
+);
+assert.match(demoHtml, /DEMO · 실제 시세 아님/);
+assert.doesNotMatch(demoHtml, /출처: KIS 실측 시세/);
+assert.match(demoHtml, /본 화면은 시연용 모의 데이터\(DEMO\)입니다/);
+console.log('  -> Explicit Demo Mode StockChartPanel PASSED.');
+
+// Case 3: Real mode authentication error (No silent fallback, explicit error + button)
+const errorHtml = renderPanelWithStates(
+  'real',
+  null,
+  null,
+  'error',
+  'error',
+  'KIS 실전 시세 조회를 위해서는 인증된 사용자 세션이 필요합니다.'
+);
+assert.match(errorHtml, /시세 조회 실패/);
+assert.match(errorHtml, /KIS 실전 시세 조회를 위해서는 인증된 사용자 세션이 필요합니다/);
+assert.match(errorHtml, /시연용 데모 데이터로 보기/);
+assert.doesNotMatch(errorHtml, /168,200/); // Did NOT substitute fake price!
+console.log('  -> Real Mode Error Separation PASSED (No silent fallback).');
+
+// Case 4: Loading state
+const loadingHtml = renderPanelWithStates('real', null, null, 'loading', 'loading');
 assert.match(loadingHtml, /불러오는 중입니다/);
 console.log('  -> Loading StockChartPanel PASSED.');
 
-// Case 3: Empty candle data state
-const emptyHtml = renderPanelWithStates(HANMI_DEMO_QUOTE, { ticker: '042700', period: 'D', count: 0, candles: [], status: 'success', start_date: '', end_date: '' }, 'success', 'empty');
+// Case 5: Empty candle data state
+const emptyHtml = renderPanelWithStates('real', realQuoteData, { ticker: '042700', period: 'D', count: 0, candles: [], status: 'success', start_date: '', end_date: '' }, 'success', 'empty');
 assert.match(emptyHtml, /캔들 데이터 없음/);
 console.log('  -> Empty StockChartPanel PASSED.');
 
-// Case 4: Candidate Card with KIS Chart Button
+// Case 6: Candidate Card with KIS Chart Button
 const testCandidateAnalysis = {
   event: { event_id: 201, title: 'AI Server Investment', event_kind: 'CAPEX_EXPANSION', occurred_at: '2026-11-15T00:00:00Z' },
   anchor: { company_id: 1, company_name: 'NVIDIA' },
@@ -165,7 +203,7 @@ const testCandidateAnalysis = {
     {
       company_id: 20,
       company_name: '비상장협력사',
-      ticker: null, // Unlisted company
+      ticker: null,
       market: null,
       security_id: null,
       relationship_depth: 2,
@@ -187,17 +225,6 @@ const testCandidateAnalysis = {
 
 function renderDashboardWithCandidate(analysis) {
   let callCount = 0;
-  // Dashboard useState calls:
-  // 0: events
-  // 1: selected
-  // 2: analysis
-  // 3: listState ('ready')
-  // 4: detailState ('ready')
-  // 5: listError ('')
-  // 6: detailError ('')
-  // 7: reload (0)
-  // 8: detailReload (0)
-  // 9: selectedStock (null or object)
   React.useState = (initial) => {
     const idx = callCount++;
     if (idx === 0) return [[{ id: 201, title: 'AI Server Investment', event_kind: 'CAPEX_EXPANSION', occurred_at: '2026-11-15T00:00:00Z' }], () => {}];

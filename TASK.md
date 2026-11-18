@@ -104,6 +104,21 @@
   - `ruff check app tests`: All checks passed.
 - 운영 DB 쓰기/마이그레이션/Worker/Actions/배포/Push/PR 없음.
 
+## AC-KIS-P1: 한국투자증권 KIS Open API 기반 On-Demand 시세 조회 엔진 (Phase 1)
+
+- 작업: KIS Open API를 활용한 특정 한국 상장기업 시세 On-Demand 조회 백엔드 어댑터, 서비스, 관리자 API 구현 및 격리 모의 응답 단위 테스트.
+- 결과:
+  1. `backend/app/adapters/kis_quote_adapter.py`: KIS OAuth 2.0 Client Credentials 토큰 발급/인메모리 캐시/갱신, 주식현재가 시세(`GET /uapi/domestic-stock/v1/quotations/inquire-price`, TR ID `FHKST01010100`), 기간별 일봉·주봉·월봉(`GET /uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice`, TR ID `FHKST03010100`) 어댑터 구현.
+  2. `backend/app/services/kis_quote_service.py`: 6자리 종목코드 및 기간(D/W/M) 검증, 최대 5년 조회 범위 제한, 10초 인메모리 단기 캐시(버스트 중복 방지), 조회 실패/결측 시 `status="no_data"` 통제.
+  3. `backend/app/api/v1/endpoints/kis_quotes.py`: 관리자 인증(`require_admin`) 내부 엔드포인트 `GET /api/v1/kis/quotes/{ticker}` 및 `GET /api/v1/kis/quotes/{ticker}/history` 구현.
+  4. `backend/app/config.py` & `api.py`: KIS 설정 필드(`KIS_APP_KEY`, `KIS_APP_SECRET`, `KIS_ENV`, `KIS_API_BASE_URL`, `KIS_TIMEOUT_SECONDS`) 및 라우터 등록.
+  5. `backend/tests/test_kis_quote_phase1.py`: 필수 9개 검증 항목 단위 테스트 구현.
+- 검증:
+  - `python -m pytest tests/test_kis_quote_phase1.py -v`: 9 passed in 4.40s (100%).
+  - `python -m pytest tests/test_sec_ingestion_isolated.py`: 11 passed (기존 회귀 없음).
+  - `python -m ruff check app tests/test_kis_quote_phase1.py`: All checks passed (0 errors).
+- 운영 DB 쓰기/마이그레이션/Worker/Actions/실제 KIS 외부호출/배포/Push/PR 없음.
+
 ## AC-ADMIN-NBCA-01: Neon Branch Cleanup Advisor (Preview 브랜치 분석 엔진)
 
 - 작업: Neon Preview 브랜치의 불필요한 누적을 방지하고 배포 안정성을 유지하기 위한 읽기 전용 판정 엔진 및 관리자 API 구현.

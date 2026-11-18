@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     SEC_USER_AGENT: str = os.getenv("SEC_USER_AGENT", "AlphaChain/1.0 (contact@alphachain.org)")
     SEC_RATE_LIMIT_PER_SEC: float = float(os.getenv("SEC_RATE_LIMIT_PER_SEC", "10.0"))
     SEC_TIMEOUT_SEC: float = float(os.getenv("SEC_TIMEOUT_SEC", "10.0"))
+    KIS_APP_KEY: str = os.getenv("KIS_APP_KEY", "")
+    KIS_APP_SECRET: str = os.getenv("KIS_APP_SECRET", "")
+    KIS_ENV: str = os.getenv("KIS_ENV", "real")
+    KIS_API_BASE_URL: str = os.getenv("KIS_API_BASE_URL", "")
+    KIS_TIMEOUT_SECONDS: float = float(os.getenv("KIS_TIMEOUT_SECONDS", "10.0"))
 
     model_config = SettingsConfigDict(
         case_sensitive=True,
@@ -80,6 +85,15 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Return the explicit browser origins allowed to call the API."""
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def effective_kis_base_url(self) -> str:
+        """Return base URL for KIS Open API depending on environment."""
+        if self.KIS_API_BASE_URL:
+            return self.KIS_API_BASE_URL.rstrip("/")
+        if self.KIS_ENV.lower() in {"simulation", "vts", "mock", "paper"}:
+            return "https://openapivts.koreainvestment.com:29443"
+        return "https://openapi.koreainvestment.com:9443"
 
 
 settings = Settings()

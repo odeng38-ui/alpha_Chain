@@ -7,6 +7,7 @@ from app.api.v1.endpoints.dart import router as dart_router
 from app.api.v1.endpoints.event_first import router as event_first_router
 from app.api.v1.endpoints.global_events import router as global_events_router
 from app.api.v1.endpoints.graph import router as graph_router
+from app.api.v1.endpoints.kis_quotes import router as kis_quotes_router
 from app.api.v1.endpoints.macro import router as macro_router
 from app.api.v1.endpoints.master import router as master_router
 from app.api.v1.endpoints.news import router as news_router
@@ -31,4 +32,5 @@ api_router.include_router(graph_router)
 api_router.include_router(relationships_router)
 api_router.include_router(scores_router)
 api_router.include_router(sec_router)
+api_router.include_router(kis_quotes_router)
 api_router.include_router(ui_router)

@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-18
+- AC-ADMIN-NBCA-01: Neon Branch Cleanup Advisor 구현 (Neon 브랜치·GitHub PR·Vercel 배포 3자 대조, PROTECTED/REVIEW_REQUIRED/DELETE_CANDIDATE 3단계 안전 판정, 관리자 전용 분석 API 및 9개 격리 테스트 통과).
 - AC-KIS-P1: 한국투자증권 KIS Open API 기반 On-Demand 시세 조회 엔진 구축 (현재가 FHKST01010100, 일/주/월봉 FHKST03010100, OAuth 토큰 관리, 인메모리 단기 캐시, 관리자 인증 API, 9개 격리 단위 테스트 통과).
 
 ## 2026-11-17

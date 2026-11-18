@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     KIS_ENV: str = os.getenv("KIS_ENV", "real")
     KIS_API_BASE_URL: str = os.getenv("KIS_API_BASE_URL", "")
     KIS_TIMEOUT_SECONDS: float = float(os.getenv("KIS_TIMEOUT_SECONDS", "10.0"))
+    NEON_API_KEY: str = os.getenv("NEON_API_KEY", "")
+    NEON_PROJECT_ID: str = os.getenv("NEON_PROJECT_ID", "")
+    GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
+    GITHUB_REPOSITORY: str = os.getenv("GITHUB_REPOSITORY", "odeng38-ui/alpha_Chain")
+    VERCEL_TOKEN: str = os.getenv("VERCEL_TOKEN", "")
+    VERCEL_PROJECT_ID: str = os.getenv("VERCEL_PROJECT_ID", "")
+    NEON_PROTECTED_BRANCHES: str = os.getenv("NEON_PROTECTED_BRANCHES", "main,production,staging")
 
     model_config = SettingsConfigDict(
         case_sensitive=True,
@@ -94,6 +101,10 @@ class Settings(BaseSettings):
         if self.KIS_ENV.lower() in {"simulation", "vts", "mock", "paper"}:
             return "https://openapivts.koreainvestment.com:29443"
         return "https://openapi.koreainvestment.com:9443"
+
+    @property
+    def neon_protected_branch_list(self) -> list[str]:
+        return [b.strip() for b in self.NEON_PROTECTED_BRANCHES.split(",") if b.strip()]
 
 
 settings = Settings()

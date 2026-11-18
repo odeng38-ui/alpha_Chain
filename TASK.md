@@ -118,3 +118,19 @@
   - `python -m pytest tests/test_sec_ingestion_isolated.py`: 11 passed (기존 회귀 없음).
   - `python -m ruff check app tests/test_kis_quote_phase1.py`: All checks passed (0 errors).
 - 운영 DB 쓰기/마이그레이션/Worker/Actions/실제 KIS 외부호출/배포/Push/PR 없음.
+
+## AC-ADMIN-NBCA-01: Neon Branch Cleanup Advisor (Preview 브랜치 분석 엔진)
+
+- 작업: Neon Preview 브랜치의 불필요한 누적을 방지하고 배포 안정성을 유지하기 위한 읽기 전용 판정 엔진 및 관리자 API 구현.
+- 결과:
+  1. `backend/app/adapters/neon_branch_reader.py`: Neon API v2 브랜치 및 컴퓨트 엔드포인트 목록 조회 어댑터 (읽기 전용, 토큰 비노출, 수동/오프라인 JSON 분석 모드 지원).
+  2. `backend/app/adapters/github_pr_reader.py`: 브랜치명 기반 GitHub PR 상태 대조 (OPEN, MERGED, CLOSED, NOT_FOUND, UNKNOWN).
+  3. `backend/app/adapters/vercel_deployment_reader.py`: Vercel Preview 배포 상태 대조 (ACTIVE_PREVIEW, PAST_PREVIEW, FAILED_PREVIEW, UNCONFIRMED_OR_DELETED, NOT_FOUND).
+  4. `backend/app/services/neon_branch_cleanup_advisor.py`: 3단계 안전 판정 엔진 (PROTECTED, REVIEW_REQUIRED, DELETE_CANDIDATE). 불확실하거나 데이터 보존 미검증 시 기본 REVIEW_REQUIRED 분류.
+  5. `backend/app/api/v1/endpoints/branch_cleanup.py`: 관리자 인증(`require_admin`) 엔드포인트 `GET /api/v1/admin/branch-cleanup/report` 및 `POST /api/v1/admin/branch-cleanup/analyze` 구현 (삭제 실행 기능 배제).
+  6. `backend/app/config.py` & `api.py`: Neon/GitHub/Vercel 설정 추가 및 라우터 등록.
+  7. `backend/tests/test_neon_branch_cleanup_advisor.py`: 9개 필수 검증 항목 단위 테스트 구현.
+- 검증:
+  - `python -m pytest tests/test_neon_branch_cleanup_advisor.py -v`: 9 passed in 1.95s (100%).
+  - `python -m ruff check app tests/test_neon_branch_cleanup_advisor.py`: All checks passed (0 errors).
+- 운영 DB 쓰기/마이그레이션/Worker/Actions/배포/Push/PR/브랜치삭제 없음.

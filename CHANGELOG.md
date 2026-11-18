@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-18
+- AC-KIS-P2.1-SEC: Phase 2.1 인증 보안 최종 보완 (`crypto.scrypt` 솔트 해시 적용, `ADMIN_SESSION_SECRET` 서명키 엄격 분리 및 fallback 제거, 마스킹 입력 기반 해시 생성기 추가, 무상태 로그아웃 한계 및 서버리스 분산 Rate Limiting 부재로 인한 운영 인증 준비 BLOCKED 상태 명시).
 - AC-KIS-P2.1: Phase 2 관리자 인증 연결 (관리자 1인 로그인, SHA-256 비밀번호 검증, HttpOnly/SameSite=Lax HMAC-SHA256 서명 세션, 세션 위조/만료 방어, CSRF Origin 검사, 로그인 시도 제한, KIS 프록시 세션 연동 및 11개 단위/통합 테스트 통과).
 - AC-KIS-P2: 한국투자증권(KIS) 시세 기반 캔들차트, 이동평균선(SMA 5/10/20/60/120), 거래량 히스토그램 및 EVENT-FIRST 대시보드 연동 구현.
   - SVG 기반 고성능 반응형 캔들차트 및 거래량 차트 컴포넌트(`StockCandlestickChart`, `StockVolumeChart`, `StockChartPanel`) 구현.

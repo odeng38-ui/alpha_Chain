@@ -19,6 +19,7 @@ fn(require, moduleObj, moduleObj.exports);
 const {
   ADMIN_COOKIE_NAME,
   SESSION_DURATION_SECONDS,
+  hashPasswordWithScrypt,
   verifyAdminPassword,
   createSessionToken,
   verifySessionToken,
@@ -27,33 +28,49 @@ const {
   resetLoginRateLimit,
 } = moduleObj.exports;
 
-console.log('Testing Admin Authentication & Session Security Module...');
+console.log('Testing Admin Authentication & Session Security Module (Enhanced)...');
 
 // Set test environment secrets
 const TEST_SECRET = 'alphachain-super-secure-session-signing-secret-key-32chars';
 const TEST_PASSWORD = 'CorrectAdminPassword123!';
-const TEST_PASSWORD_HASH = crypto.createHash('sha256').update(TEST_PASSWORD).digest('hex');
+const testSalt = crypto.randomBytes(16);
+const testDerivedKey = crypto.scryptSync(TEST_PASSWORD, testSalt, 64);
+const TEST_SCRYPT_HASH = `${testSalt.toString('hex')}:${testDerivedKey.toString('hex')}`;
 
 process.env.ADMIN_SESSION_SECRET = TEST_SECRET;
-process.env.ADMIN_PASSWORD_HASH = TEST_PASSWORD_HASH;
+process.env.ADMIN_PASSWORD_HASH = TEST_SCRYPT_HASH;
 process.env.ADMIN_API_KEY = 'backend-internal-admin-key-xyz';
 
-// Test 1: Password Verification
-assert.equal(verifyAdminPassword(TEST_PASSWORD), true, 'Correct password must be accepted');
+// Test 1: scrypt Password Verification
+assert.equal(verifyAdminPassword(TEST_PASSWORD), true, 'Correct password must be accepted via scrypt');
 assert.equal(verifyAdminPassword('WrongPassword'), false, 'Wrong password must be rejected');
 assert.equal(verifyAdminPassword(''), false, 'Empty password must be rejected');
 assert.equal(verifyAdminPassword(null), false, 'Null password must be rejected');
-console.log('  -> Password verification PASSED.');
+console.log('  -> scrypt password verification with salt PASSED.');
 
-// Test 2: Fallback when only ADMIN_API_KEY / ADMIN_PASSWORD configured
+// Test 2: Helper hashPasswordWithScrypt verification
+const generatedHash = hashPasswordWithScrypt('AnotherPassword456!');
+process.env.ADMIN_PASSWORD_HASH = generatedHash;
+assert.equal(verifyAdminPassword('AnotherPassword456!'), true, 'Generated scrypt hash must verify');
+assert.equal(verifyAdminPassword('WrongPass'), false, 'Wrong password must be rejected against generated scrypt hash');
+process.env.ADMIN_PASSWORD_HASH = TEST_SCRYPT_HASH; // restore
+console.log('  -> hashPasswordWithScrypt helper PASSED.');
+
+// Test 3: No fallback to plain password or ADMIN_API_KEY when ADMIN_PASSWORD_HASH is unset
 delete process.env.ADMIN_PASSWORD_HASH;
-process.env.ADMIN_PASSWORD = 'DirectPassword789';
-assert.equal(verifyAdminPassword('DirectPassword789'), true, 'Direct password comparison must succeed');
-assert.equal(verifyAdminPassword('Wrong'), false, 'Wrong password must fail direct compare');
-process.env.ADMIN_PASSWORD_HASH = TEST_PASSWORD_HASH; // restore
-console.log('  -> Direct password comparison fallback PASSED.');
+assert.equal(verifyAdminPassword('backend-internal-admin-key-xyz'), false, 'Must NOT fallback to ADMIN_API_KEY');
+assert.equal(verifyAdminPassword(TEST_PASSWORD), false, 'Must fail closed when no hash configured');
+process.env.ADMIN_PASSWORD_HASH = TEST_SCRYPT_HASH; // restore
+console.log('  -> Fail-closed behavior (no fallback to ADMIN_API_KEY) PASSED.');
 
-// Test 3: Session Token Generation & Verification
+// Test 4: Strict ADMIN_SESSION_SECRET requirement (No fallback to ADMIN_API_KEY for signing)
+delete process.env.ADMIN_SESSION_SECRET;
+assert.equal(createSessionToken(), null, 'Must return null when ADMIN_SESSION_SECRET is missing');
+assert.equal(verifySessionToken('some.token').valid, false, 'Must fail verify when ADMIN_SESSION_SECRET is missing');
+process.env.ADMIN_SESSION_SECRET = TEST_SECRET; // restore
+console.log('  -> Strict ADMIN_SESSION_SECRET separation (no fallback to ADMIN_API_KEY) PASSED.');
+
+// Test 5: Session Token Generation & Verification
 const token = createSessionToken();
 assert.ok(token && typeof token === 'string', 'Token must be generated');
 const parts = token.split('.');
@@ -65,20 +82,20 @@ assert.equal(verifyResult.payload.role, 'admin', 'Payload role must be admin');
 assert.ok(verifyResult.payload.exp > Math.floor(Date.now() / 1000), 'Token must not be expired');
 console.log('  -> Session token creation and validation PASSED.');
 
-// Test 4: Tampered Token Detection
+// Test 6: Tampered Token Detection
 const tamperedToken = `${parts[0]}.forged_signature_1234567890`;
 const tamperedResult = verifySessionToken(tamperedToken);
 assert.equal(tamperedResult.valid, false, 'Tampered signature must be rejected');
 assert.match(tamperedResult.reason, /위조되었거나 유효하지 않습니다/, 'Rejection reason must indicate forgery');
 console.log('  -> Tampered token detection PASSED.');
 
-// Test 5: Malformed Token Detection
+// Test 7: Malformed Token Detection
 assert.equal(verifySessionToken('invalid-token-without-dot').valid, false);
 assert.equal(verifySessionToken('').valid, false);
 assert.equal(verifySessionToken(null).valid, false);
 console.log('  -> Malformed token handling PASSED.');
 
-// Test 6: Expired Token Detection
+// Test 8: Expired Token Detection
 const expiredPayload = {
   role: 'admin',
   iat: Math.floor(Date.now() / 1000) - 1000,
@@ -94,7 +111,7 @@ assert.equal(expiredResult.valid, false, 'Expired token must be rejected');
 assert.match(expiredResult.reason, /세션이 만료되었습니다/, 'Rejection reason must indicate expiration');
 console.log('  -> Expired token detection PASSED.');
 
-// Test 7: Rate Limiting
+// Test 9: Rate Limiting
 const testIp = '192.168.1.100';
 resetLoginRateLimit(testIp);
 assert.equal(checkLoginRateLimit(testIp), true); // attempt 1
@@ -107,7 +124,7 @@ resetLoginRateLimit(testIp);
 assert.equal(checkLoginRateLimit(testIp), true, 'Counter must be reset upon success');
 console.log('  -> Login rate limiting PASSED.');
 
-// Test 8: CSRF Origin Validation
+// Test 10: CSRF Origin Validation
 const safeReq = {
   headers: {
     get: (k) => (k === 'origin' ? 'http://localhost:3000' : k === 'host' ? 'localhost:3000' : null),
@@ -123,17 +140,15 @@ const unsafeReq = {
 assert.equal(isSafeOrigin(unsafeReq), false, 'Mismatched origin must be unsafe');
 console.log('  -> CSRF origin validation PASSED.');
 
-// Test 9: KIS Route Handler Protection Logic
+// Test 11: KIS Route Handler Protection Logic
 console.log('Testing KIS Route Handler Protection Logic...');
 
-// Load route.ts for KIS quotes
 const kisRoutePath = path.resolve(__dirname, '../src/app/api/kis/quotes/[ticker]/route.ts');
 const kisRouteSource = fs.readFileSync(kisRoutePath, 'utf8');
 const kisTranspiled = ts.transpileModule(kisRouteSource, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
 });
 
-// Mock Next.js next/server
 const mockNextResponse = {
   json: (data, init = {}) => ({
     status: init.status || 200,
@@ -161,22 +176,18 @@ kisFn(customRequire, kisModuleObj, kisModuleObj.exports);
 const { GET: handleKisQuote } = kisModuleObj.exports;
 
 (async () => {
-  // 9.1: Unauthenticated request -> must return 401
+  // 11.1: Unauthenticated request -> must return 401
   const unauthReq = {
     url: 'http://localhost:3000/api/kis/quotes/042700',
-    headers: {
-      get: (k) => null,
-    },
-    cookies: {
-      get: (k) => undefined,
-    },
+    headers: { get: (k) => null },
+    cookies: { get: (k) => undefined },
   };
   const unauthRes = await handleKisQuote(unauthReq, { params: Promise.resolve({ ticker: '042700' }) });
   assert.equal(unauthRes.status, 401, 'Unauthenticated request must return 401');
   assert.equal(unauthRes.data.code, 'ADMIN_AUTH_REQUIRED');
   console.log('  -> Unauthenticated request blocked with 401 PASSED.');
 
-  // 9.2: Explicit demo request -> returns mock data regardless of auth
+  // 11.2: Explicit demo request -> returns mock data regardless of auth
   const demoReq = {
     url: 'http://localhost:3000/api/kis/quotes/042700?demo=true',
     headers: { get: () => null },
@@ -188,7 +199,7 @@ const { GET: handleKisQuote } = kisModuleObj.exports;
   assert.equal(demoRes.data.is_demo, true);
   console.log('  -> Explicit demo request returned mock data PASSED.');
 
-  // 9.3: Authenticated request with valid session token -> proxies with server ADMIN_API_KEY
+  // 11.3: Authenticated request with valid session token -> proxies with server ADMIN_API_KEY
   let capturedHeaders = null;
   global.fetch = async (url, init) => {
     capturedHeaders = init.headers;
@@ -222,5 +233,5 @@ const { GET: handleKisQuote } = kisModuleObj.exports;
   assert.equal(authRes.data.is_demo, false, 'Authenticated real quote must have is_demo: false');
   console.log('  -> Authenticated session successfully proxied with server ADMIN_API_KEY PASSED.');
 
-  console.log('\nAll Admin Authentication, Session, and KIS Proxy Integration tests passed successfully!');
+  console.log('\nAll 11 Admin Authentication, scrypt, and Session Isolation tests passed successfully!');
 })();

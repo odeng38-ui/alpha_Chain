@@ -1,12 +1,15 @@
 /**
- * Server-side Admin Authentication and Session Security Module
+ * Server-side Admin Authentication and Session Security Module (Enhanced)
  *
- * Implements:
- * 1. Single admin password verification (SHA-256 hash or secure timing-safe compare).
- * 2. Serverless-safe stateless HMAC-SHA256 signed session tokens.
- * 3. HttpOnly cookie configuration with Secure & SameSite=Lax.
- * 4. CSRF protection via Origin validation.
- * 5. In-memory sliding window rate-limiting for login attempts.
+ * Security Enhancements:
+ * 1. Password Verification: Node.js crypto.scrypt with cryptographically random salt and timingSafeEqual.
+ *    No plain SHA-256, no fallback to plain ADMIN_API_KEY.
+ * 2. Session Signing Key Separation: Strictly requires ADMIN_SESSION_SECRET (min 16 chars).
+ *    Fallback to ADMIN_API_KEY completely removed.
+ * 3. Stateless Session Token: Contains zero sensitive data ({ role: 'admin', iat, exp, nonce }).
+ * 4. Architectural Limitation Note on Rate Limiting & Revocation:
+ *    - In-memory rate limiting operates per-instance only; inadequate for serverless production.
+ *    - Stateless token revocation before 8h expiration requires shared distributed storage.
  */
 
 import * as crypto from 'node:crypto';
@@ -15,7 +18,8 @@ import type { NextRequest } from 'next/server';
 export const ADMIN_COOKIE_NAME = 'alphachain_admin_session';
 export const SESSION_DURATION_SECONDS = 8 * 60 * 60; // 8 hours
 
-// In-memory attempt tracker for login rate-limiting (sliding window per IP)
+// In-memory attempt tracker for single-instance / local dev only.
+// In serverless multi-instance production, this MUST be supplemented by managed WAF or distributed Redis.
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 const MAX_ATTEMPTS = 5;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
@@ -29,21 +33,36 @@ export interface SessionPayload {
 
 /**
  * Get secret key for session HMAC signing.
- * Prefers ADMIN_SESSION_SECRET, falls back to ADMIN_API_KEY.
+ * Strictly requires ADMIN_SESSION_SECRET.
+ * Fallback to ADMIN_API_KEY is completely forbidden to maintain key separation.
  */
 function getSigningSecret(): string | null {
-  const secret = process.env.ADMIN_SESSION_SECRET || process.env.ADMIN_API_KEY;
-  if (!secret || secret.length < 8) {
+  const secret = process.env.ADMIN_SESSION_SECRET;
+  if (!secret || secret.length < 16) {
     return null;
   }
   return secret;
 }
 
 /**
- * Verify admin password using SHA-256 hash or secure direct comparison.
- * Supports:
- * - ADMIN_PASSWORD_HASH: hex string of sha256(password)
- * - ADMIN_PASSWORD / ADMIN_API_KEY: fallback direct comparison
+ * Derive a password hash using Node.js crypto.scrypt with a random 16-byte salt.
+ * Returns format: `${saltHex}:${derivedKeyHex}`
+ */
+export function hashPasswordWithScrypt(password: string): string {
+  if (!password || typeof password !== 'string') {
+    throw new Error('비밀번호를 입력해야 합니다.');
+  }
+  const salt = crypto.randomBytes(16);
+  // scrypt N=16384, r=8, p=1, keylen=64
+  const derivedKey = crypto.scryptSync(password, salt, 64);
+  return `${salt.toString('hex')}:${derivedKey.toString('hex')}`;
+}
+
+/**
+ * Verify admin password using crypto.scrypt and timing-safe equality comparison.
+ * Requires ADMIN_PASSWORD_HASH in format: `${saltHex}:${derivedKeyHex}`.
+ *
+ * Never falls back to plain SHA-256 or unhashed ADMIN_API_KEY.
  */
 export function verifyAdminPassword(password: string): boolean {
   if (!password || typeof password !== 'string') {
@@ -51,42 +70,46 @@ export function verifyAdminPassword(password: string): boolean {
   }
 
   const configuredHash = process.env.ADMIN_PASSWORD_HASH;
-  const configuredPassword = process.env.ADMIN_PASSWORD || process.env.ADMIN_API_KEY;
-
-  if (!configuredHash && !configuredPassword) {
-    // Fail-closed if no admin credentials are configured
+  if (!configuredHash || typeof configuredHash !== 'string') {
+    // Fail-closed: No password hash configured
     return false;
   }
 
-  // 1. Verify against SHA-256 hash if configured
-  if (configuredHash) {
-    const inputHash = crypto.createHash('sha256').update(password).digest('hex');
-    const inputBuf = Buffer.from(inputHash, 'hex');
-    const targetBuf = Buffer.from(configuredHash, 'hex');
-
-    if (inputBuf.length !== targetBuf.length) {
-      return false;
-    }
-    return crypto.timingSafeEqual(inputBuf, targetBuf);
+  const parts = configuredHash.split(':');
+  if (parts.length !== 2) {
+    return false;
   }
 
-  // 2. Fallback to direct password comparison using timingSafeEqual
-  if (configuredPassword) {
-    const inputBuf = Buffer.from(password, 'utf8');
-    const targetBuf = Buffer.from(configuredPassword, 'utf8');
-
-    if (inputBuf.length !== targetBuf.length) {
-      return false;
-    }
-    return crypto.timingSafeEqual(inputBuf, targetBuf);
+  const [saltHex, expectedKeyHex] = parts;
+  if (!saltHex || !expectedKeyHex) {
+    return false;
   }
 
-  return false;
+  try {
+    const saltBuf = Buffer.from(saltHex, 'hex');
+    const expectedKeyBuf = Buffer.from(expectedKeyHex, 'hex');
+
+    if (saltBuf.length < 16 || expectedKeyBuf.length < 32) {
+      return false;
+    }
+
+    const derivedKey = crypto.scryptSync(password, saltBuf, expectedKeyBuf.length);
+
+    if (derivedKey.length !== expectedKeyBuf.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(derivedKey, expectedKeyBuf);
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Create a cryptographically signed stateless session token.
  * Format: `${base64url(payload)}.${hmac_sha256_signature}`
+ *
+ * Contains zero secrets or credentials.
  */
 export function createSessionToken(): string | null {
   const secret = getSigningSecret();
@@ -129,7 +152,7 @@ export function verifySessionToken(token: string | null | undefined): {
   const [payloadStr, signature] = parts;
   const secret = getSigningSecret();
   if (!secret) {
-    return { valid: false, reason: '서버의 세션 서명 키가 설정되지 않았습니다.' };
+    return { valid: false, reason: '서버의 세션 서명 키(ADMIN_SESSION_SECRET)가 설정되지 않았습니다.' };
   }
 
   const expectedSignature = crypto
@@ -170,9 +193,8 @@ export function verifySessionToken(token: string | null | undefined): {
 export function isSafeOrigin(request: NextRequest): boolean {
   const origin = request.headers.get('origin');
   if (!origin) {
-    // If no origin, check referer
     const referer = request.headers.get('referer');
-    if (!referer) return true; // Non-browser or direct curl
+    if (!referer) return true;
     try {
       const refUrl = new URL(referer);
       const host = request.headers.get('host') ?? '';
@@ -192,8 +214,11 @@ export function isSafeOrigin(request: NextRequest): boolean {
 }
 
 /**
- * In-memory login attempt rate limiter.
+ * In-memory login attempt rate limiter for single-instance / local preview.
  * Returns true if allowed, false if blocked.
+ *
+ * NOTE: Multi-instance serverless environments require external distributed rate-limiting
+ * (e.g. Upstash Redis, Vercel Edge Middleware / WAF).
  */
 export function checkLoginRateLimit(clientIp: string): boolean {
   const now = Date.now();

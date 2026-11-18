@@ -175,3 +175,18 @@
   - 브라우저에 KIS App Key/Secret 및 Admin Key 노출 없음 (NEXT_PUBLIC 미사용, HttpOnly 쿠키).
   - 운영 DB 쓰기/마이그레이션/Worker/Cron 실행 없음.
   - Vercel 배포/GitHub Push/PR/main 병합 없음.
+
+## AC-KIS-P2.1-SEC: Phase 2.1 인증 보안 최종 보완 (scrypt·서명키 분리·서버리스 한계 규명)
+
+- 작업:
+  1. 비밀번호 검증 강화: Node.js 내장 `crypto.scrypt` (16바이트 솔트 + 64바이트 파생키) 및 `timingSafeEqual` 적용. 단순 SHA-256 및 `ADMIN_API_KEY` 대체 fallback 완전 제거 (Fail-closed).
+  2. 비밀번호 해시 안전 생성 스크립트(`frontend/scripts/generate-password-hash.cjs`) 추가: 대화형 마스킹 입력으로 명령줄 인수/셸 기록/프로세스 목록에 비밀번호 비노출.
+  3. 세션 서명키 분리: `ADMIN_SESSION_SECRET` 미설정 시 로그인/세션 발급 차단. `ADMIN_API_KEY` 대체 fallback 제거. 세션 토큰 내 민감정보 배제.
+  4. 로그아웃 한계 문서화: 무상태 서명 쿠키 특성상 클라이언트 쿠키는 즉시 파기되나, 분산 공유 저장소(Redis 등)가 없는 구조에서 만료 전 토큰의 서버 측 즉시 강제 폐기는 불가능함을 명시.
+  5. 서버리스 환경 로그인 시도 제한 한계 규명: 인메모리 Map은 단일 인스턴스/로컬 전용이며 다중 람다 인스턴스 간 공유 불가. 외부 관리형 Rate Limiter(Vercel WAF 또는 Upstash Redis) 부재로 운영 인증 준비 상태를 **BLOCKED**로 판정.
+- 검증:
+  - `node tests/test-admin-auth.cjs`: scrypt 솔트 검증, 생성 헬퍼, 해시 미설정 fail-closed 차단, 서명키 분리 strict 검증, 위조/만료 차단, CSRF, KIS 프록시 연동 등 11개 단위/통합 테스트 통과 (100%).
+  - `npx tsc --noEmit`: 0 errors 통과.
+- 운영 환경 미해결 보안 항목:
+  - 서버리스 환경 내 분산 공유 Rate Limiting 미연동 (BLOCKED)
+  - 서버리스 무상태 토큰 즉시 폐기(Revocation Blacklist) 저장소 부재 (8시간 자연 만료에 의존)

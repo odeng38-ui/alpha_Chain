@@ -134,3 +134,25 @@
   - `python -m pytest tests/test_neon_branch_cleanup_advisor.py -v`: 9 passed in 1.95s (100%).
   - `python -m ruff check app tests/test_neon_branch_cleanup_advisor.py`: All checks passed (0 errors).
 - 운영 DB 쓰기/마이그레이션/Worker/Actions/배포/Push/PR/브랜치삭제 없음.
+
+## AC-KIS-P2: KIS 시세 기반 캔들차트 및 이동평균선 구현
+
+- 작업: 기존 EVENT-FIRST 화면에서 한국 상장기업 후보 선택 시 한국투자증권(KIS) 데이터 기반 캔들차트, 이동평균선(SMA), 거래량 히스토그램 및 현재가 시각화.
+- 결과:
+  1. `frontend/src/lib/kis-types.ts`: StockCandle, KisCurrentQuoteData, KisHistoricalQuotesData, SMAConfig, MovingAveragePeriod 등 정규화된 TypeScript 모델 정의.
+  2. `frontend/src/lib/moving-average.ts`: Simple Moving Average(SMA) 모듈 구현 (데이터 부족 구간 null 처리, 0 보간 배제, 시계열 정렬 보존).
+  3. `frontend/src/lib/kis-mock-data.ts`: Phase 1.1 실전 검증 결과 기반 한미반도체(042700) 실측치 및 일봉/주봉/월봉 데모 데이터 정의.
+  4. `frontend/src/app/api/kis/quotes/[ticker]/route.ts` & `history/route.ts`: 관리자 인증 키 브라우저 노출 방지 서버 Route Handler 구현 (6자리 종목코드/주기 검증, X-Admin-Key 서버 주입, 비인가 요청 401 차단 및 데모 모드 지원).
+  5. `frontend/src/components/stock-candlestick-chart.tsx`: 순수 SVG 기반 반응형 캔들차트 구현 (국내 주식 표준 색상 적용, Y축 가격 그리드, 십자선/터치/툴팁 인스펙터, SMA 5/10/20/60/120 폴리라인 오버레이).
+  6. `frontend/src/components/stock-volume-chart.tsx`: 캔들과 정렬된 SVG 거래량 히스토그램 구현 (등락별 색상 구분, 십자선 동기화, 거래량 결측 구분).
+  7. `frontend/src/components/stock-chart-panel.tsx`: 현재가 스냅샷 헤더(기업명/종목코드/현재가/등락/거래량/기준시각/출처), 일봉·주봉·월봉 전환, 이동평균선 개별 토글 체크박스, 로딩/에러/빈상태 및 유의사항 표시 패널 구현.
+  8. `frontend/src/components/event-first-dashboard.tsx`: 한국 기업 후보 카드 내 KIS 시세 차트 열기/닫기 연동, 종목코드 없는 비상장사 안내, 이벤트 변경 시 차트 초기화 구현.
+- 검증:
+  - `node tests/test-moving-average.cjs`: 7개 테스트 전체 통과 (빈 배열, 주기 초과, 윈도우 슬라이딩, 정렬 등).
+  - `node tests/test-chart-panel-render.cjs`: 5개 SSR 렌더링 상태 전체 통과 (캔들/거래량 SVG, 정상 렌더링, 로딩, 빈 데이터, 후보 차트 연동 및 비상장 안내).
+  - `node tests/core-integration-02-render.cjs` & `core-dashboard-01-render.cjs`: 기존 테스트 전체 통과 (회귀 없음).
+  - `npx tsc --noEmit`: 무오류 통과 (0 errors).
+- 보안 및 운영 상태:
+  - 브라우저에 KIS App Key/Secret 및 Admin Key 노출 없음 (NEXT_PUBLIC 미사용).
+  - 운영 DB 쓰기/마이그레이션/Worker/Cron 실행 없음.
+  - Vercel 배포/GitHub Push/PR/main 병합 없음.

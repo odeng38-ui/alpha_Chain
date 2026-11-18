@@ -22,6 +22,7 @@ import type {
   GlobalEventSummary,
 } from '@/lib/types';
 import { EmptyState, ErrorState, Freshness, LoadingState } from './ui-state';
+import { StockChartPanel } from './stock-chart-panel';
 
 const statusLabels: Record<string, string> = {
   available: '사용 가능',
@@ -50,7 +51,7 @@ const deepAnalyses = [
 ] as const;
 
 function label(value?: string | null) {
-  if (!value) return '미제공';
+  if (!value || typeof value !== 'string') return '미제공';
   return statusLabels[value] ?? value.replaceAll('_', ' ');
 }
 
@@ -138,10 +139,14 @@ function CandidateCard({
   candidate,
   analysis,
   onOpenChain,
+  onSelectStock,
+  isSelectedForChart,
 }: {
   candidate: EventFirstCandidate;
   analysis: EventFirstAnalysis;
   onOpenChain?: (companyId: number) => void;
+  onSelectStock?: (ticker: string, companyName: string, market?: string) => void;
+  isSelectedForChart?: boolean;
 }) {
   const directions = relationshipDirections(candidate, analysis);
   const price = candidate.price;
@@ -163,7 +168,33 @@ function CandidateCard({
         <span className="ef-status">{label(candidate.eligibility_status)}</span>
       </header>
 
-      {onOpenChain && <button onClick={() => onOpenChain(candidate.company_id)}>기존 체인맵 열기</button>}
+      <div className="ef-candidate-actions flex items-center gap-2 my-2">
+        {onOpenChain && <button onClick={() => onOpenChain(candidate.company_id)}>기존 체인맵 열기</button>}
+        {candidate.ticker ? (
+          <button
+            type="button"
+            className={`ef-chart-btn text-xs px-3 py-1 rounded font-semibold transition flex items-center gap-1.5 ${
+              isSelectedForChart
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'border border-blue-600 text-blue-600 hover:bg-blue-50'
+            }`}
+            onClick={() =>
+              onSelectStock?.(
+                candidate.ticker!,
+                candidate.company_name,
+                candidate.market ?? undefined
+              )
+            }
+          >
+            <BarChart3 size={13} />
+            {isSelectedForChart ? 'KIS 시세 차트 닫기' : 'KIS 시세 차트 열기'}
+          </button>
+        ) : (
+          <span className="ef-no-ticker text-xs text-slate-400 italic py-1">
+            종목코드 없음 (시세 조회 불가)
+          </span>
+        )}
+      </div>
       <section className="ef-trust-grid">
         <div>
           <small>공급 관계 방향 (확인됨)</small>
@@ -406,6 +437,7 @@ export function EventFirstDashboard({ asOf, onOpenChain }: { asOf: string; onOpe
   const [detailError, setDetailError] = useState('');
   const [reload, setReload] = useState(0);
   const [detailReload, setDetailReload] = useState(0);
+  const [selectedStock, setSelectedStock] = useState<{ ticker: string; companyName: string; market?: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -427,6 +459,7 @@ export function EventFirstDashboard({ asOf, onOpenChain }: { asOf: string; onOpe
   }, [reload]);
 
   useEffect(() => {
+    setSelectedStock(null);
     if (selected === null) {
       setAnalysis(null);
       setDetailState('idle');
@@ -611,6 +644,12 @@ export function EventFirstDashboard({ asOf, onOpenChain }: { asOf: string; onOpe
                     candidate={candidate}
                     analysis={analysis}
                     onOpenChain={onOpenChain}
+                    onSelectStock={(ticker, companyName, market) =>
+                      setSelectedStock((prev) =>
+                        prev?.ticker === ticker ? null : { ticker, companyName, market }
+                      )
+                    }
+                    isSelectedForChart={selectedStock?.ticker === candidate.ticker}
                   />
                 ))}
               </div>
@@ -618,6 +657,15 @@ export function EventFirstDashboard({ asOf, onOpenChain }: { asOf: string; onOpe
               <EmptyState
                 title="적격 공급망 후보 없음"
                 description="선택한 기준 시점에 사용할 수 있는 승인·근거·상장종목 조건을 충족한 후보가 없습니다."
+              />
+            )}
+
+            {selectedStock && (
+              <StockChartPanel
+                ticker={selectedStock.ticker}
+                companyName={selectedStock.companyName}
+                market={selectedStock.market}
+                onClose={() => setSelectedStock(null)}
               />
             )}
 

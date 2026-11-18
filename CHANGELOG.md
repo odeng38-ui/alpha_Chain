@@ -1,6 +1,12 @@
 # Changelog
 
 ## 2026-11-18
+- AC-KIS-P2: 한국투자증권(KIS) 시세 기반 캔들차트, 이동평균선(SMA 5/10/20/60/120), 거래량 히스토그램 및 EVENT-FIRST 대시보드 연동 구현.
+  - SVG 기반 고성능 반응형 캔들차트 및 거래량 차트 컴포넌트(`StockCandlestickChart`, `StockVolumeChart`, `StockChartPanel`) 구현.
+  - 일봉(D)·주봉(W)·월봉(M) 주기 전환, SMA 5·10·20·60·120 개별 토글 및 십자선/툴팁/터치 인스펙터 지원.
+  - 이동평균선(SMA) 독립 계산 모듈(`moving-average.ts`) 및 단위 테스트 7건 통과 (데이터 부족 시 null 처리, 가짜 보간 없음).
+  - 관리자 인증 안전 서버 Route Handler(`app/api/kis/...`) 및 한미반도체(042700) 검증 실전 데이터 기반 모의/데모 폴백 제공.
+  - EVENT-FIRST 후보 종목 선택 연동 및 비상장 종목 시세 불가 안내 처리. SSR 렌더링 테스트 및 TypeScript noEmit 무오류 통과.
 - AC-ADMIN-NBCA-01: Neon Branch Cleanup Advisor 구현 (Neon 브랜치·GitHub PR·Vercel 배포 3자 대조, PROTECTED/REVIEW_REQUIRED/DELETE_CANDIDATE 3단계 안전 판정, 관리자 전용 분석 API 및 9개 격리 테스트 통과).
 - AC-KIS-P1: 한국투자증권 KIS Open API 기반 On-Demand 시세 조회 엔진 구축 (현재가 FHKST01010100, 일/주/월봉 FHKST03010100, OAuth 토큰 관리, 인메모리 단기 캐시, 관리자 인증 API, 9개 격리 단위 테스트 통과).
 

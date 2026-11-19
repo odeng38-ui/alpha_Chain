@@ -315,3 +315,42 @@
   - Worker·Cron 실행 없음.
   - 실제 KIS API 호출 없음.
   - GitHub Push·PR 변경, main 병합, Vercel 배포 없음.
+
+
+## AC-KIS-P3.1: Phase 3.1 종목 분석 KIS 온디맨드 연동
+
+- 작업:
+  1. 기능 브랜치 `feat/ac-stock-analysis-kis` 생성 (최신 `main` 6483bf8 기준).
+  2. 종목 분석 화면(`CompanyDetail`)에 `StockChartPanel` 온디맨드 연동:
+     - 최초 진입 시 차트 기본 닫힘 (`initialChartOpen: false`), KIS API 호출 0회 보장.
+     - 상장 종목에 대해 `[KIS 실시간 캔들차트]` 토글 버튼 제공, 클릭 시 6자리 종목코드(`data.security.ticker`), 종목명, 시장 구분 전달하여 차트 영역 개방.
+     - 비상장 종목은 시세 불가 배지 표시 및 KIS 호출 원천 배제.
+     - 차트 조회 오류 또는 인증 실패 시에도 기존 DB 점수·재무·공시·가격 분석 화면 100% 무손실 유지.
+  3. 클라이언트 2단계 인메모리 캐시 모듈(`frontend/src/lib/kis-cache.ts`) 구축:
+     - 현재가 TTL: 60초 (60,000ms)
+     - 과거 캔들 TTL: 10분 (600,000ms)
+     - 일봉(D)·주봉(W)·월봉(M) 주기별 독립 키 캐싱 및 기간 전환 시 캐시 재사용.
+     - 새로고침 시 클라이언트 캐시 무효화 및 서버 최신 조회 연계.
+  4. 빠른 종목 전환 시 잔존 데이터 누수 방지:
+     - `ticker` 변경 시 `active = false` 정리 및 `quote`, `history` 상태 즉각 null 초기화 적용.
+- 검증:
+  - `node tests/test-phase3-1-stock-analysis-kis.cjs`: 7개 테스트 케이스 100% 통과.
+    - 최초 진입 시 차트 미렌더링 및 KIS 호출 0회 검증
+    - 종목 상세 선택 시 정확한 종목코드/종목명/시장 전달 검증
+    - 비상장 종목 시세 불가 안내 및 KIS 호출 배제 검증
+    - 현재가 60초, 과거 캔들 10분 캐시 저장 및 적중 검증
+    - D/W/M 주기 전환 시 독립 캐시 유지 검증
+    - 캐시 TTL 상수 기준 일치 검증
+    - KIS 오류와 무관한 기존 DB 분석 화면 100% 무손실 렌더링 검증
+  - `node tests/test-phase2-8-csrf-strict.cjs`: 100% 통과.
+  - `node tests/test-phase2-7-csrf-and-quote-status.cjs`: 100% 통과.
+  - `node tests/test-chart-panel-render.cjs`: 100% 통과.
+  - `npx tsc --noEmit`: 0 errors 무오류 통과.
+- 남은 위험:
+  - 브라우저 인메모리 캐시이므로 페이지 새로고침(F5) 시 클라이언트 캐시는 초기화되며 다시 서버로 온디맨드 요청됨 (정상 동작).
+- 운영 환경 상태:
+  - DB 쓰기 및 마이그레이션 실행 없음.
+  - Neon 브랜치 생성·삭제 없음.
+  - Worker·Cron 실행 없음.
+  - 실제 외부 KIS API 호출 없음.
+  - GitHub Push·PR 변경, main 병합, Vercel 배포 없음.

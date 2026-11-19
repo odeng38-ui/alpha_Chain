@@ -33,6 +33,13 @@ import type {
   SMAConfig,
 } from '@/lib/kis-types';
 import { DEFAULT_SMA_CONFIG, SMA_COLORS } from '@/lib/kis-types';
+import {
+  clearKisCache,
+  getCachedHistory,
+  getCachedQuote,
+  setCachedHistory,
+  setCachedQuote,
+} from '@/lib/kis-cache';
 import { calculateMultipleSMAs } from '@/lib/moving-average';
 import { StockCandlestickChart } from './stock-candlestick-chart';
 import { StockVolumeChart } from './stock-volume-chart';
@@ -88,12 +95,26 @@ export function StockChartPanel({
   // Fetch Current Quote
   useEffect(() => {
     let active = true;
+    const mode = chartMode;
+
+    // Check client cache first (60s TTL)
+    const cached = getCachedQuote(ticker, mode);
+    if (cached) {
+      setQuote(cached);
+      setQuoteStatus('success');
+      setErrorMessage('');
+      return;
+    }
+
+    // Clear stale quote immediately on ticker change
+    setQuote(null);
     setQuoteStatus('loading');
     setErrorMessage('');
 
-    getKisCurrentQuote(ticker, { demo: chartMode === 'demo' })
+    getKisCurrentQuote(ticker, { demo: mode === 'demo' })
       .then((data) => {
         if (!active) return;
+        setCachedQuote(ticker, mode, data);
         setQuote(data);
         setQuoteStatus('success');
       })
@@ -112,12 +133,29 @@ export function StockChartPanel({
   // Fetch Historical Candles
   useEffect(() => {
     let active = true;
-    setHistoryStatus('loading');
+    const mode = chartMode;
     setSelectedIndex(null);
 
-    getKisHistoricalQuotes(ticker, period, { demo: chartMode === 'demo' })
+    // Check client cache first (10m TTL for selected timeframe)
+    const cached = getCachedHistory(ticker, period, mode);
+    if (cached) {
+      setHistory(cached);
+      if (!cached.candles || cached.candles.length === 0) {
+        setHistoryStatus('empty');
+      } else {
+        setHistoryStatus('success');
+      }
+      return;
+    }
+
+    // Clear stale history immediately on ticker/period change
+    setHistory(null);
+    setHistoryStatus('loading');
+
+    getKisHistoricalQuotes(ticker, period, { demo: mode === 'demo' })
       .then((data) => {
         if (!active) return;
+        setCachedHistory(ticker, period, mode, data);
         setHistory(data);
         if (!data.candles || data.candles.length === 0) {
           setHistoryStatus('empty');
@@ -150,6 +188,7 @@ export function StockChartPanel({
   };
 
   const handleRefresh = () => {
+    clearKisCache(ticker);
     setReloadTrigger((v) => v + 1);
   };
 

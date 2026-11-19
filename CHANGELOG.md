@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-18
+- AC-KIS-P3.1: Phase 3.1 종목 분석 KIS 온디맨드 연동 (종목 상세 분석 화면에 StockChartPanel 온디맨드 통합, 최초 진입 시 KIS 호출 0회 보장, 클라이언트 2단계 캐시 [현재가 60초, 과거 캔들 10분] 적용, 일/주/월봉 독립 캐시 및 빠른 종목 전환 시 잔존 데이터 누수 방지, 격리 테스트 7건 통과).
 - AC-KIS-P2.8: Phase 2.8 관리자 변경 API 보안 강화 (인증 방식과 출처 검증 엄격 분리, 세션 쿠키 기반 변경 요청 시 Origin/Referer 누락 403 차단, 외부 출처 및 Origin/Referer 불일치 차단, 출처 없는 순수 서버 간 API 키 허용 및 혼재 시 우회 방지, 8개 단위/통합 테스트 통과).
 - AC-KIS-P2.7: Phase 2.7 운영 반영 전 보안·표시 보완 (관리자 데이터 변경 API CSRF Origin 검증 추가, KIS 시세 5단계 상태 표시 구분, 서버 간 ADMIN_API_KEY 보호 확인, 격리 테스트 통과).
 - AC-KIS-P2.5: Phase 2.5 관리자 인증 보안 수정 (`/admin/login` 로그인 화면 구현, `/admin` 및 `/admin/ingestion` 서버 측 세션 검증 및 미인증 리다이렉트 적용, `/api/backend/[...path]` 관리자 경로 및 데이터 변경 요청 401 차단, 서버 전용 `ADMIN_API_KEY` 주입 및 클라이언트 비노출, 단위/통합 테스트 통과).

@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-18
+- AC-KIS-P2.5: Phase 2.5 관리자 인증 보안 수정 (`/admin/login` 로그인 화면 구현, `/admin` 및 `/admin/ingestion` 서버 측 세션 검증 및 미인증 리다이렉트 적용, `/api/backend/[...path]` 관리자 경로 및 데이터 변경 요청 401 차단, 서버 전용 `ADMIN_API_KEY` 주입 및 클라이언트 비노출, 단위/통합 테스트 통과).
 - AC-KIS-P2.3: Phase 2.3 자동 DB 마이그레이션 분리 (`backend/pyproject.toml`에서 Vercel 빌드 시 자동 alembic upgrade 실행 스크립트 제거, DB 마이그레이션을 사전 승인된 수동 관리 작업으로 분리).
 - AC-KIS-P2.2: Phase 2.2 최소 보안 마무리 (무상태 관리자 세션 만료 시간을 8시간에서 1시간/3,600초로 단축, 만료 범위 검증 테스트 수정 및 11개 단위/통합 테스트 통과, Vercel Hobby 환경 WAF Rate Limiting 절차 및 프론트엔드 필수 환경변수 4종 역할 정리).
 - AC-KIS-P2.1-SEC: Phase 2.1 인증 보안 최종 보완 (`crypto.scrypt` 솔트 해시 적용, `ADMIN_SESSION_SECRET` 서명키 엄격 분리 및 fallback 제거, 마스킹 입력 기반 해시 생성기 추가, 무상태 로그아웃 한계 및 서버리스 분산 Rate Limiting 부재로 인한 운영 인증 준비 BLOCKED 상태 명시).

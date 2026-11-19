@@ -220,3 +220,28 @@
   - Worker·Cron 실행 없음.
   - 실제 KIS API 호출 없음.
   - GitHub Push·PR 변경, main 병합, Vercel 배포 없음.
+
+## AC-KIS-P2.5: Phase 2.5 관리자 인증 보안 수정 (관리자 화면 및 백엔드 프록시 인증 연결)
+
+- 작업:
+  1. `/admin/login` 로그인 화면 구현: 기존 `/api/auth/login`을 재사용하여 관리자 단일 비밀번호 scrypt 검증 및 HttpOnly 1시간 세션 발급, `redirect` 파라미터 복귀 처리.
+  2. `/admin` 및 `/admin/ingestion` 서버 측 세션 보호: Server Component에서 `cookies()`와 `verifySessionToken()` 검증 후 미인증 시 `/admin/login?redirect=...`로 즉시 HTTP 307 리다이렉트 (클라이언트 뷰 컴포넌트 사전 렌더링 차단).
+  3. 사이드바 로그아웃 연동: `AdminView` 및 `IngestionView` 사이드바에 로그아웃 버튼 추가 (`POST /api/auth/logout` 호출 후 로그인 화면 이동).
+  4. `/api/backend/[...path]` 보안 강화: 관리자 전용 네임스페이스(`admin`, `sec`, `backtests`), 운영 점검 엔드포인트(`master/report`, `prices/quality` 등) 및 모든 데이터 변경 요청(POST, PUT, PATCH, DELETE)에 세션 인증 강제 적용. 미인증 시 401(`ADMIN_AUTH_REQUIRED`) 차단.
+  5. `ADMIN_API_KEY` 서버 격리: 클라이언트에서 관리자 키를 받거나 노출하지 않고, 인증된 세션 요청에 대해서만 서버 환경변수에서 주입하여 백엔드로 전달.
+  6. 세션 만료 자동 대응: `admin-api.ts` 및 `ingestion-api.ts`에서 401 응답 수신 시 `/admin/login` 자동 이동 처리.
+  7. 기존 EVENT-FIRST 공용 분석 및 KIS 차트 조회 경로 정상 유지.
+- 검증:
+  - `node tests/test-phase2-5-admin-security.cjs`: 비밀번호 검증, 1시간 토큰 만료, 경로 분류기, 미인증 401 차단, 세션 기반 `ADMIN_API_KEY` 주입, 공용 경로 통과, 서버 컴포넌트 리다이렉트 등 전체 통과.
+  - `node tests/test-admin-auth.cjs`: 기존 11개 인증/세션 테스트 100% 통과 (회귀 없음).
+  - `node tests/test-moving-average.cjs`: 이동평균선 7개 테스트 100% 통과.
+  - `npx tsc --noEmit`: TypeScript 무오류 (0 errors).
+- 남은 보안 위험:
+  - 서버리스 분산 환경용 Rate Limiting 미연동: Next.js 서버리스 다중 인스턴스 간 로그인 시도 횟수 공유는 별도 외부 WAF(Cloudflare) 또는 Upstash Redis 설정이 필요함.
+  - 무상태 서명 쿠키 특성상 토큰 즉시 강제 폐기(블랙리스트) 미구현: 로그아웃 시 클라이언트 쿠키는 삭제되나 탈취된 토큰은 1시간 자연 만료 전까지 서버 측 즉시 폐기를 위해 별도 저장소 필요 (긴급 시 `ADMIN_SESSION_SECRET` 회전으로 전체 즉시 무효화 가능).
+- 운영 환경 상태:
+  - DB 쓰기 및 마이그레이션 실행 없음.
+  - Neon 브랜치 생성·삭제 없음.
+  - Worker·Cron 실행 없음.
+  - 실제 KIS API 호출 없음.
+  - GitHub Push·PR 변경, main 병합, Vercel 배포 없음.

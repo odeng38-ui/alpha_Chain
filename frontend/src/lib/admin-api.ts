@@ -128,6 +128,9 @@ export type AdminOverview = {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/backend/${path}`, { cache: 'no-store', signal: AbortSignal.timeout(10_000), ...init });
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== 'undefined') {
+      window.location.href = '/admin/login?redirect=' + encodeURIComponent(window.location.pathname);
+    }
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.detail ?? `요청 실패 (${response.status})`);
   }

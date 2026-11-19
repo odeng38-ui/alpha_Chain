@@ -9,14 +9,14 @@
  * 3. Stateless Session Token: Contains zero sensitive data ({ role: 'admin', iat, exp, nonce }).
  * 4. Architectural Limitation Note on Rate Limiting & Revocation:
  *    - In-memory rate limiting operates per-instance only; inadequate for serverless production.
- *    - Stateless token revocation before 8h expiration requires shared distributed storage.
+ *    - Stateless token revocation before 1h expiration requires shared distributed storage.
  */
 
 import * as crypto from 'node:crypto';
 import type { NextRequest } from 'next/server';
 
 export const ADMIN_COOKIE_NAME = 'alphachain_admin_session';
-export const SESSION_DURATION_SECONDS = 8 * 60 * 60; // 8 hours
+export const SESSION_DURATION_SECONDS = 1 * 60 * 60; // 1 hour (3600 seconds)
 
 // In-memory attempt tracker for single-instance / local dev only.
 // In serverless multi-instance production, this MUST be supplemented by managed WAF or distributed Redis.

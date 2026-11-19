@@ -70,7 +70,8 @@ assert.equal(verifySessionToken('some.token').valid, false, 'Must fail verify wh
 process.env.ADMIN_SESSION_SECRET = TEST_SECRET; // restore
 console.log('  -> Strict ADMIN_SESSION_SECRET separation (no fallback to ADMIN_API_KEY) PASSED.');
 
-// Test 5: Session Token Generation & Verification
+// Test 5: Session Token Generation & Verification (1-hour expiration)
+assert.equal(SESSION_DURATION_SECONDS, 3600, 'Session duration must be exactly 1 hour (3600s)');
 const token = createSessionToken();
 assert.ok(token && typeof token === 'string', 'Token must be generated');
 const parts = token.split('.');
@@ -79,8 +80,11 @@ assert.equal(parts.length, 2, 'Token must consist of payload and signature');
 const verifyResult = verifySessionToken(token);
 assert.equal(verifyResult.valid, true, 'Valid token must be verified');
 assert.equal(verifyResult.payload.role, 'admin', 'Payload role must be admin');
-assert.ok(verifyResult.payload.exp > Math.floor(Date.now() / 1000), 'Token must not be expired');
-console.log('  -> Session token creation and validation PASSED.');
+const nowSec = Math.floor(Date.now() / 1000);
+assert.ok(verifyResult.payload.exp > nowSec, 'Token must not be expired');
+assert.ok(verifyResult.payload.exp <= nowSec + 3600, 'Token expiration must be <= now + 3600s');
+assert.ok(verifyResult.payload.exp >= nowSec + 3590, 'Token expiration must be >= now + 3590s (1h duration)');
+console.log('  -> Session token creation, 1-hour expiration, and validation PASSED.');
 
 // Test 6: Tampered Token Detection
 const tamperedToken = `${parts[0]}.forged_signature_1234567890`;

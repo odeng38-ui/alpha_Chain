@@ -190,3 +190,17 @@
 - 운영 환경 미해결 보안 항목:
   - 서버리스 환경 내 분산 공유 Rate Limiting 미연동 (BLOCKED)
   - 서버리스 무상태 토큰 즉시 폐기(Revocation Blacklist) 저장소 부재 (8시간 자연 만료에 의존)
+
+## AC-KIS-P2.2: Phase 2.2 최소 보안 마무리 (세션 단축 및 운영 보안 절차 확정)
+
+- 작업:
+  1. 무상태 관리자 세션 유효기간 단축: `frontend/src/lib/server-auth.ts`의 `SESSION_DURATION_SECONDS`를 기존 8시간(28,800초)에서 1시간(3,600초)으로 축소하여 탈취 토큰의 최대 생존 시간을 1/8로 제한.
+  2. 세션 만료 테스트 수정 및 검증: `frontend/tests/test-admin-auth.cjs`에서 세션 만료 시간 3,600초 assertion 추가 및 11개 단위/통합 테스트 전체 통과 확인.
+  3. Vercel Hobby 환경 WAF Rate Limiting 운영 절차 정리 (설정 변경 없이 문서화).
+  4. 프론트엔드 서버 필수 환경변수 4종(`ADMIN_PASSWORD_HASH`, `ADMIN_SESSION_SECRET`, `ADMIN_API_KEY`, `BACKEND_URL`)의 역할 및 사용처 정리 (비밀값 비노출).
+- 검증:
+  - `node tests/test-admin-auth.cjs`: 1시간 유효기간 검증 포함 11개 테스트 전체 통과 (100%).
+- 운영 환경 상태:
+  - 운영 DB 쓰기, Neon 브랜치 조작, Worker/Cron 실행 없음.
+  - 실제 KIS API 호출 없음 (테스트 모의/격리 유지).
+  - Vercel 배포, GitHub Push, PR 생성, main 병합 없음.

@@ -9,7 +9,7 @@
  * In a stateless cryptographic cookie token architecture without a shared distributed
  * revocation store (e.g. Redis / Upstash), logging out destroys the browser's HttpOnly cookie,
  * but cannot immediately invalidate an already-extracted raw token on the server side prior to its
- * 8-hour natural expiration timestamp. Full immediate server-side revocation requires adding a
+ * 1-hour natural expiration timestamp. Full immediate server-side revocation requires adding a
  * shared token blacklist or stateful session store.
  */
 

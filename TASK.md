@@ -204,3 +204,19 @@
   - 운영 DB 쓰기, Neon 브랜치 조작, Worker/Cron 실행 없음.
   - 실제 KIS API 호출 없음 (테스트 모의/격리 유지).
   - Vercel 배포, GitHub Push, PR 생성, main 병합 없음.
+
+## AC-KIS-P2.3: Phase 2.3 자동 DB 마이그레이션 분리
+
+- 작업:
+  1. Vercel Preview 및 Production 빌드 시 데이터베이스 마이그레이션 자동 실행 방지: `backend/pyproject.toml`에서 `[tool.vercel.scripts]` build 스크립트(`alembic upgrade head`) 완전 제거.
+  2. 기존 Alembic 마이그레이션 파일 및 설정 보존: `backend/alembic/` 디렉터리 및 `backend/alembic.ini`는 변경 없이 유지.
+  3. `vercel.json` 멀티서비스 구성 및 `BACKEND_URL` 서비스 바인딩 유지.
+  4. DB 마이그레이션 실행 정책 명시: 앞으로 DB 마이그레이션은 빌드/배포 프로세스에서 자동 실행되지 않으며, 사전에 명시적으로 승인된 관리 작업에서만 수동 실행한다.
+- 검증:
+  - `backend/pyproject.toml`: TOML 문법 파싱 및 유효성 검증 완료 (`[tool.vercel.scripts]` 제거 확인, 프로젝트 의존성 12개 및 ruff 린트 설정 정상 유지).
+- 운영 환경 상태:
+  - DB 쓰기 및 마이그레이션 실행 없음.
+  - Neon 브랜치 생성·삭제 없음.
+  - Worker·Cron 실행 없음.
+  - 실제 KIS API 호출 없음.
+  - GitHub Push·PR 변경, main 병합, Vercel 배포 없음.

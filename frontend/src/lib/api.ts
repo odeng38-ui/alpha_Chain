@@ -1,6 +1,7 @@
 import type { CompanyDetailData, CompanySummary, DashboardData, EventFirstAnalysis, GlobalEventSummary, GraphData, NewsImpactData, NewsImpactStatus } from './types';
 import type { CandlePeriod, KisCurrentQuoteData, KisHistoricalQuotesData } from './kis-types';
 import { getMockHistorical, getMockQuote } from './kis-mock-data';
+import { clearRealKisCache } from './kis-cache';
 
 async function api<T>(path: string): Promise<T> {
   const response = await fetch(`/api/backend/${path}`, { cache: 'no-store' });
@@ -108,6 +109,7 @@ export async function adminLogin(password: string): Promise<{ success: boolean; 
 }
 
 export async function adminLogout(): Promise<{ success: boolean }> {
+  clearRealKisCache();
   try {
     const res = await fetch('/api/auth/logout', { method: 'POST' });
     return { success: res.ok };

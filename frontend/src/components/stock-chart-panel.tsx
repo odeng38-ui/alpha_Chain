@@ -35,6 +35,7 @@ import type {
 import { DEFAULT_SMA_CONFIG, SMA_COLORS } from '@/lib/kis-types';
 import {
   clearKisCache,
+  clearRealKisCache,
   getCachedHistory,
   getCachedQuote,
   setCachedHistory,
@@ -85,7 +86,11 @@ export function StockChartPanel({
   useEffect(() => {
     let active = true;
     checkAdminSession().then((res) => {
-      if (active) setIsAdmin(res.authenticated);
+      if (!active) return;
+      setIsAdmin(res.authenticated);
+      if (!res.authenticated) {
+        clearRealKisCache();
+      }
     });
     return () => {
       active = false;
@@ -212,8 +217,11 @@ export function StockChartPanel({
   };
 
   const handleLogout = async () => {
+    clearRealKisCache();
     await adminLogout();
     setIsAdmin(false);
+    setQuote(null);
+    setHistory(null);
     setReloadTrigger((v) => v + 1);
   };
 

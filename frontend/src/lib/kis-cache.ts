@@ -84,3 +84,16 @@ export function clearKisCache(ticker?: string): void {
     if (key.startsWith(prefix)) historyCache.delete(key);
   });
 }
+
+/**
+ * Purge only real market quote caches upon logout or unauthenticated session.
+ * Preserves demo data while preventing any leak of authenticated real market data.
+ */
+export function clearRealKisCache(): void {
+  quoteCache.forEach((_, key) => {
+    if (key.endsWith(':real')) quoteCache.delete(key);
+  });
+  historyCache.forEach((_, key) => {
+    if (key.endsWith(':real')) historyCache.delete(key);
+  });
+}

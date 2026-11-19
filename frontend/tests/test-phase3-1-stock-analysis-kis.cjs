@@ -36,6 +36,7 @@ const {
   getCachedHistory,
   setCachedHistory,
   clearKisCache,
+  clearRealKisCache,
 } = kisCacheModule.exports;
 
 // 2. Transpile company-detail.tsx
@@ -208,6 +209,35 @@ console.log('\n[Test 7] KIS 차트 영역 개방 시에도 기존 점수·재무
   // 공시 정보 확인
   assert.ok(html.includes('분기보고서'), '공시 목록이 유지되어야 합니다.');
   console.log('  -> KIS 차트와 무관하게 기존 DB 분석 화면 100% 무손실 유지 PASSED.');
+}
+
+// --- Test 8: DEMO와 실측 캐시 격리 및 로그아웃 시 실측 캐시 완전 파기 검증 ---
+console.log('\n[Test 8] DEMO/실측 캐시 분리 및 로그아웃 시 실측 캐시 완전 파기 검증...');
+{
+  const realQuote = { ticker: '042700', price: 115000, is_mock: false };
+  const demoQuote = { ticker: '042700', price: 99999, is_mock: true };
+  const realHistory = { ticker: '042700', period: 'D', candles: [{ close: 115000 }], is_mock: false };
+  const demoHistory = { ticker: '042700', period: 'D', candles: [{ close: 99999 }], is_mock: true };
+
+  setCachedQuote('042700', 'real', realQuote);
+  setCachedQuote('042700', 'demo', demoQuote);
+  setCachedHistory('042700', 'D', 'real', realHistory);
+  setCachedHistory('042700', 'D', 'demo', demoHistory);
+
+  // 1. DEMO와 실측 분리 검증
+  assert.equal(getCachedQuote('042700', 'real').price, 115000, '실측 캐시는 실측 데이터여야 합니다.');
+  assert.equal(getCachedQuote('042700', 'demo').price, 99999, 'DEMO 캐시는 DEMO 데이터여야 합니다.');
+  assert.equal(getCachedHistory('042700', 'D', 'real').candles[0].close, 115000);
+  assert.equal(getCachedHistory('042700', 'D', 'demo').candles[0].close, 99999);
+  console.log('  -> DEMO 및 실측 시세 캐시 완전 분리 확인 PASSED.');
+
+  // 2. 로그아웃 시 실측 캐시 파기 검증
+  clearRealKisCache();
+  assert.equal(getCachedQuote('042700', 'real'), null, '로그아웃 후 실측 현재가 캐시는 파기되어야 합니다.');
+  assert.equal(getCachedHistory('042700', 'D', 'real'), null, '로그아웃 후 실측 캔들 캐시는 파기되어야 합니다.');
+  assert.equal(getCachedQuote('042700', 'demo').price, 99999, 'DEMO 현재가 캐시는 보존되어야 합니다.');
+  assert.equal(getCachedHistory('042700', 'D', 'demo').candles[0].close, 99999, 'DEMO 캔들 캐시는 보존되어야 합니다.');
+  console.log('  -> 로그아웃 시 실측 캐시 즉시 파기 및 DEMO 캐시 무결성 유지 PASSED.');
 }
 
 console.log('\nAll Phase 3.1 종목 분석 KIS 온디맨드 연동 tests passed successfully!');

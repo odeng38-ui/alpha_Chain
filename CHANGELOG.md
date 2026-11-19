@@ -1,6 +1,19 @@
 # Changelog
 
 ## 2026-11-18
+- AC-KIS-P2.8: Phase 2.8 관리자 변경 API 보안 강화 (인증 방식과 출처 검증 엄격 분리, 세션 쿠키 기반 변경 요청 시 Origin/Referer 누락 403 차단, 외부 출처 및 Origin/Referer 불일치 차단, 출처 없는 순수 서버 간 API 키 허용 및 혼재 시 우회 방지, 8개 단위/통합 테스트 통과).
+- AC-KIS-P2.7: Phase 2.7 운영 반영 전 보안·표시 보완 (관리자 데이터 변경 API CSRF Origin 검증 추가, KIS 시세 5단계 상태 표시 구분, 서버 간 ADMIN_API_KEY 보호 확인, 격리 테스트 통과).
+- AC-KIS-P2.5: Phase 2.5 관리자 인증 보안 수정 (`/admin/login` 로그인 화면 구현, `/admin` 및 `/admin/ingestion` 서버 측 세션 검증 및 미인증 리다이렉트 적용, `/api/backend/[...path]` 관리자 경로 및 데이터 변경 요청 401 차단, 서버 전용 `ADMIN_API_KEY` 주입 및 클라이언트 비노출, 단위/통합 테스트 통과).
+- AC-KIS-P2.3: Phase 2.3 자동 DB 마이그레이션 분리 (`backend/pyproject.toml`에서 Vercel 빌드 시 자동 alembic upgrade 실행 스크립트 제거, DB 마이그레이션을 사전 승인된 수동 관리 작업으로 분리).
+- AC-KIS-P2.2: Phase 2.2 최소 보안 마무리 (무상태 관리자 세션 만료 시간을 8시간에서 1시간/3,600초로 단축, 만료 범위 검증 테스트 수정 및 11개 단위/통합 테스트 통과, Vercel Hobby 환경 WAF Rate Limiting 절차 및 프론트엔드 필수 환경변수 4종 역할 정리).
+- AC-KIS-P2.1-SEC: Phase 2.1 인증 보안 최종 보완 (`crypto.scrypt` 솔트 해시 적용, `ADMIN_SESSION_SECRET` 서명키 엄격 분리 및 fallback 제거, 마스킹 입력 기반 해시 생성기 추가, 무상태 로그아웃 한계 및 서버리스 분산 Rate Limiting 부재로 인한 운영 인증 준비 BLOCKED 상태 명시).
+- AC-KIS-P2.1: Phase 2 관리자 인증 연결 (관리자 1인 로그인, SHA-256 비밀번호 검증, HttpOnly/SameSite=Lax HMAC-SHA256 서명 세션, 세션 위조/만료 방어, CSRF Origin 검사, 로그인 시도 제한, KIS 프록시 세션 연동 및 11개 단위/통합 테스트 통과).
+- AC-KIS-P2: 한국투자증권(KIS) 시세 기반 캔들차트, 이동평균선(SMA 5/10/20/60/120), 거래량 히스토그램 및 EVENT-FIRST 대시보드 연동 구현.
+  - SVG 기반 고성능 반응형 캔들차트 및 거래량 차트 컴포넌트(`StockCandlestickChart`, `StockVolumeChart`, `StockChartPanel`) 구현.
+  - 일봉(D)·주봉(W)·월봉(M) 주기 전환, SMA 5·10·20·60·120 개별 토글 및 십자선/툴팁/터치 인스펙터 지원.
+  - 이동평균선(SMA) 독립 계산 모듈(`moving-average.ts`) 및 단위 테스트 7건 통과 (데이터 부족 시 null 처리, 가짜 보간 없음).
+  - 관리자 인증 안전 서버 Route Handler(`app/api/kis/...`) 및 한미반도체(042700) 검증 실전 데이터 기반 모의/데모 폴백 제공.
+  - EVENT-FIRST 후보 종목 선택 연동 및 비상장 종목 시세 불가 안내 처리. SSR 렌더링 테스트 및 TypeScript noEmit 무오류 통과.
 - AC-ADMIN-NBCA-01: Neon Branch Cleanup Advisor 구현 (Neon 브랜치·GitHub PR·Vercel 배포 3자 대조, PROTECTED/REVIEW_REQUIRED/DELETE_CANDIDATE 3단계 안전 판정, 관리자 전용 분석 API 및 9개 격리 테스트 통과).
 - AC-KIS-P1: 한국투자증권 KIS Open API 기반 On-Demand 시세 조회 엔진 구축 (현재가 FHKST01010100, 일/주/월봉 FHKST03010100, OAuth 토큰 관리, 인메모리 단기 캐시, 관리자 인증 API, 9개 격리 단위 테스트 통과).
 

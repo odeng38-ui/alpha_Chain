@@ -1,4 +1,6 @@
 import type { CompanyDetailData, CompanySummary, DashboardData, EventFirstAnalysis, GlobalEventSummary, GraphData, NewsImpactData, NewsImpactStatus } from './types';
+import type { CandlePeriod, KisCurrentQuoteData, KisHistoricalQuotesData } from './kis-types';
+import { getMockHistorical, getMockQuote } from './kis-mock-data';
 
 async function api<T>(path: string): Promise<T> {
   const response = await fetch(`/api/backend/${path}`, { cache: 'no-store' });
@@ -32,3 +34,84 @@ export const getEventFirstAnalysis = (eventId: number | string, date: string) =>
   api<EventFirstAnalysis>(
     `event-first/events/${encodeURIComponent(eventId)}/analysis?as_of=${encodeURIComponent(utcEndOfDay(date))}&score_horizon=20d&score_version=v1.0`,
   );
+
+export async function getKisCurrentQuote(
+  ticker: string,
+  options: { demo?: boolean; bypassCache?: boolean } = {}
+): Promise<KisCurrentQuoteData> {
+  if (options.demo) {
+    return getMockQuote(ticker);
+  }
+
+  const params = new URLSearchParams();
+  if (options.bypassCache) params.set('bypass_cache', 'true');
+  const query = params.toString() ? `?${params.toString()}` : '';
+
+  const res = await fetch(`/api/kis/quotes/${encodeURIComponent(ticker)}${query}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `실전 시세 조회 실패 (${res.status})`);
+  }
+  return (await res.json()) as KisCurrentQuoteData;
+}
+
+export async function getKisHistoricalQuotes(
+  ticker: string,
+  period: CandlePeriod = 'D',
+  options: { demo?: boolean; adjust?: boolean } = {}
+): Promise<KisHistoricalQuotesData> {
+  if (options.demo) {
+    return getMockHistorical(ticker, period);
+  }
+
+  const params = new URLSearchParams({ period });
+  if (options.adjust !== undefined) params.set('adjust', String(options.adjust));
+  const query = params.toString() ? `?${params.toString()}` : '';
+
+  const res = await fetch(`/api/kis/quotes/${encodeURIComponent(ticker)}/history${query}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `과거 캔들 조회 실패 (${res.status})`);
+  }
+  return (await res.json()) as KisHistoricalQuotesData;
+}
+
+export async function checkAdminSession(): Promise<{ authenticated: boolean; role?: string | null }> {
+  try {
+    const res = await fetch('/api/auth/session', { cache: 'no-store' });
+    if (!res.ok) return { authenticated: false };
+    return (await res.json()) as { authenticated: boolean; role?: string | null };
+  } catch {
+    return { authenticated: false };
+  }
+}
+
+export async function adminLogin(password: string): Promise<{ success: boolean; detail?: string }> {
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { success: false, detail: err.detail ?? '로그인에 실패했습니다.' };
+    }
+    return { success: true };
+  } catch {
+    return { success: false, detail: '로그인 요청 중 네트워크 오류가 발생했습니다.' };
+  }
+}
+
+export async function adminLogout(): Promise<{ success: boolean }> {
+  try {
+    const res = await fetch('/api/auth/logout', { method: 'POST' });
+    return { success: res.ok };
+  } catch {
+    return { success: false };
+  }
+}

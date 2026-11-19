@@ -282,3 +282,36 @@
   - Worker·Cron 실행 없음.
   - 실제 KIS API 호출 없음.
   - GitHub Push·PR 변경, main 병합, Vercel 배포 없음.
+
+## AC-KIS-P2.8: Phase 2.8 관리자 변경 API 보안 강화 (CSRF 및 출처 검증 분리)
+
+- 작업:
+  1. 관리자 데이터 변경 요청(POST, PUT, PATCH, DELETE)의 인증 수단과 출처 검증 엄격 분리.
+  2. 세션 쿠키 기반 요청: 동일 출처(Origin 또는 Referer) 검증 필수 적용.
+  3. 출처 정보(Origin 및 Referer)가 모두 누락된 세션 쿠키 요청은 HTTP 403 (`CSRF_ORIGIN_INVALID`) 차단 (우회 원천 차단).
+  4. 외부 출처의 Origin 또는 Referer가 감지되거나, Origin과 Referer가 상호 불일치하는 요청은 403 차단.
+  5. 서버 간 자동화 `X-Admin-Key`: 유효한 서버 키가 명시되고 세션 쿠키가 없는 순수 서버 요청에 한해 출처 정보 없는 호출 정책상 허용. 외부 Origin이 전달된 경우 403 차단.
+  6. 인증 우선순위 정립: 세션 및 API 키 모두 없는 요청은 401 (`ADMIN_AUTH_REQUIRED`) 차단.
+  7. 기존 `/api/auth/login` 브라우저 로그인 및 공개/보호 읽기 API 정상 동작 확인.
+- 검증:
+  - `node tests/test-phase2-8-csrf-strict.cjs`: 8개 테스트 케이스 100% 통과.
+    - 동일 출처 + 유효 세션: 허용 (200)
+    - 외부 출처 + 유효 세션: 403 차단
+    - 출처 정보 없음 + 유효 세션: 403 차단
+    - 출처 정보 없음 + 유효 서버 API 키: 정책상 허용 (200)
+    - 외부 출처 + 유효 API 키: 차단 (403)
+    - 세션·API 키 모두 없음: 401 차단
+    - Origin과 Referer 불일치 요청: 차단 (403)
+    - 로그인 및 기존 읽기 API 영향 없음 확인
+  - `node tests/test-phase2-7-csrf-and-quote-status.cjs`: 100% 통과.
+  - `node tests/test-phase2-5-admin-security.cjs`: 100% 통과.
+  - `npx tsc --noEmit`: 0 errors 무오류 통과.
+- 남은 보안 위험:
+  - 서버리스 분산 환경 로그인 Rate Limiting (Cloudflare WAF / Upstash Redis 권장)
+  - 무상태 토큰 즉시 강제 폐기(Blacklist)는 1시간 자연 만료 또는 `ADMIN_SESSION_SECRET` 회전에 의존
+- 운영 환경 상태:
+  - DB 쓰기 및 마이그레이션 실행 없음.
+  - Neon 브랜치 생성·삭제 없음.
+  - Worker·Cron 실행 없음.
+  - 실제 KIS API 호출 없음.
+  - GitHub Push·PR 변경, main 병합, Vercel 배포 없음.

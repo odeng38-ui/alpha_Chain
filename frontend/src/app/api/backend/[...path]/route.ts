@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ADMIN_COOKIE_NAME, isSafeOrigin, verifySessionToken } from '@/lib/server-auth';
+import { ADMIN_COOKIE_NAME, verifySessionToken } from '@/lib/server-auth';
 
 const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:8000';
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
@@ -56,32 +56,92 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const pathSegments = path || [];
   const method = request.method;
   const normMethod = method.toUpperCase();
-
-  // 1. CSRF Protection: Validate Origin for all state-mutating requests (POST, PUT, PATCH, DELETE)
   const isMutation = !['GET', 'HEAD'].includes(normMethod);
-  if (isMutation && !isSafeOrigin(request)) {
-    return NextResponse.json(
-      { detail: '비정상적인 요청 출처(Origin)입니다.', error_code: 'CSRF_ORIGIN_INVALID' },
-      { status: 403 }
-    );
-  }
-
-  // 2. Check if caller has verified admin session or internal admin header
-  const sessionCookie = request.cookies.get(ADMIN_COOKIE_NAME)?.value;
-  const sessionCheck = verifySessionToken(sessionCookie);
-
-  const headerAdminKey = request.headers.get('X-Admin-Key');
-  const hasValidHeaderKey = Boolean(headerAdminKey && ADMIN_API_KEY && headerAdminKey === ADMIN_API_KEY);
-  const isAuthorizedAdmin = sessionCheck.valid || hasValidHeaderKey;
-
   const requiresAuth = isProtectedAdminRoute(method, pathSegments);
 
-  // 3. Reject unauthenticated access to admin routes
+  // 1. Identify Authentication Credentials (Session Cookie vs. Server-to-Server X-Admin-Key)
+  const sessionCookie = request.cookies.get(ADMIN_COOKIE_NAME)?.value;
+  const sessionCheck = verifySessionToken(sessionCookie);
+  const hasValidSession = Boolean(sessionCheck.valid);
+
+  const headerAdminKey = request.headers.get('X-Admin-Key');
+  const hasValidHeaderKey = Boolean(
+    headerAdminKey && ADMIN_API_KEY && headerAdminKey === ADMIN_API_KEY
+  );
+  const isAuthorizedAdmin = hasValidSession || hasValidHeaderKey;
+
+  // 2. Authentication Enforcement: Reject unauthenticated access to admin routes
   if (requiresAuth && !isAuthorizedAdmin) {
     return NextResponse.json(
       { detail: '관리자 인증이 필요합니다.', error_code: 'ADMIN_AUTH_REQUIRED' },
       { status: 401 }
     );
+  }
+
+  // 3. Strict CSRF & Origin Validation for State-Mutating Requests (POST, PUT, PATCH, DELETE)
+  if (isMutation) {
+    const origin = request.headers.get('origin');
+    const referer = request.headers.get('referer');
+    const host = request.headers.get('host') ?? '';
+
+    let originHost: string | null = null;
+    if (origin) {
+      try {
+        originHost = new URL(origin).host;
+      } catch {
+        return NextResponse.json(
+          { detail: '유효하지 않은 요청 출처(Origin) 형식입니다.', error_code: 'CSRF_ORIGIN_INVALID' },
+          { status: 403 }
+        );
+      }
+    }
+
+    let refererHost: string | null = null;
+    if (referer) {
+      try {
+        refererHost = new URL(referer).host;
+      } catch {
+        return NextResponse.json(
+          { detail: '유효하지 않은 참조 주소(Referer) 형식입니다.', error_code: 'CSRF_ORIGIN_INVALID' },
+          { status: 403 }
+        );
+      }
+    }
+
+    // A) Block external origins or referers across ALL mutation requests (even with valid API key)
+    if (originHost !== null && originHost !== host) {
+      return NextResponse.json(
+        { detail: '허용되지 않은 외부 요청 출처(Origin)입니다.', error_code: 'CSRF_ORIGIN_INVALID' },
+        { status: 403 }
+      );
+    }
+    if (refererHost !== null && refererHost !== host) {
+      return NextResponse.json(
+        { detail: '허용되지 않은 외부 참조 주소(Referer)입니다.', error_code: 'CSRF_ORIGIN_INVALID' },
+        { status: 403 }
+      );
+    }
+
+    // B) Block requests where Origin and Referer are both present but conflict
+    if (originHost !== null && refererHost !== null && originHost !== refererHost) {
+      return NextResponse.json(
+        { detail: '요청 출처(Origin)와 참조 주소(Referer)가 일치하지 않습니다.', error_code: 'CSRF_ORIGIN_INVALID' },
+        { status: 403 }
+      );
+    }
+
+    // C) Handle requests with missing origin/referer:
+    if (originHost === null && refererHost === null) {
+      // Cookie-authenticated requests MUST provide same-origin verification.
+      // Missing origin/referer on cookie sessions is strictly blocked with 403.
+      // Only pure server-to-server calls with valid X-Admin-Key and NO cookie are permitted.
+      if (sessionCookie || !hasValidHeaderKey) {
+        return NextResponse.json(
+          { detail: '출처 정보(Origin 또는 Referer)가 누락된 관리자 변경 요청입니다.', error_code: 'CSRF_ORIGIN_INVALID' },
+          { status: 403 }
+        );
+      }
+    }
   }
 
   // 4. For authorized admin requests, ensure backend ADMIN_API_KEY is configured

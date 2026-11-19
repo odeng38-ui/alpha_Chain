@@ -245,3 +245,40 @@
   - Worker·Cron 실행 없음.
   - 실제 KIS API 호출 없음.
   - GitHub Push·PR 변경, main 병합, Vercel 배포 없음.
+
+## AC-KIS-P2.7: Phase 2.7 운영 반영 전 보안·표시 보완
+
+- 작업:
+  1. 관리자 데이터 변경 API CSRF Origin 검증 추가:
+     - `/api/backend/[...path]` 라우트 핸들러에서 모든 상태 변경 요청(POST, PUT, PATCH, DELETE) 수신 시 `isSafeOrigin(request)` 검증 수행.
+     - 출처 불일치(Cross-Origin) 또는 비정상적인 Referer 요청에 대해 HTTP 403 Forbidden (`CSRF_ORIGIN_INVALID`) 차단 적용.
+     - 브라우저 동일 출처(Same-Origin) 및 정상적인 관리자 호출 허용.
+  2. KIS 시세 조회 5단계 상태 명확한 분리 표시:
+     - `StockChartPanel` 컴포넌트에서 KIS 실측 시세 배지 노출 조건을 엄격히 정비하여 5가지 상태를 명확히 분리.
+     - `isDemo`: `DEMO · 실제 시세 아님` (amber 배지)
+     - `isLoading`: `시세 조회 중...` + 스피너 (slate 배지)
+     - `quoteStatus === 'error'`: `시세 조회 실패` (rose 배지)
+     - `quoteStatus === 'empty' || !quote`: `시세 데이터 없음` (slate 배지)
+     - 정상 수신 (`!isDemo && quoteStatus === 'success' && quote`): `출처: KIS 실측 시세` (emerald 배지)
+     - 차트 주기(D/W/M) 구조 및 SMA 5/10/20/60/120 계산 로직 100% 보존.
+  3. 서버리스 환경 로그인 요청 제한(Rate Limiting) 방안 확인 및 보고:
+     - Vercel 기본/Hobby 환경에서는 다중 서버리스 인스턴스 간 공유 인메모리 Rate Limiting 불가. Native Vercel WAF 커스텀 룰은 Vercel Pro + Security Package 또는 Enterprise 플랜 필요.
+     - 공유 저장소 도입 시 비용/외부 의존성 발생(Upstash Redis 등).
+     - 권장 무비용 대안: Vercel 도메인 전면에 무료 Cloudflare WAF를 두고 `/api/auth/login` 대상 IP 기반 Rate Limit(예: 10분당 5회) 적용.
+  4. 서버 간 `ADMIN_API_KEY` 보호 구조 확인:
+     - `ADMIN_API_KEY`는 프론트엔드 서버 내부 환경변수(`process.env.ADMIN_API_KEY`)에서만 로드되며 클라이언트 번들에 노출되지 않음을 재확인.
+     - Next.js 서버 라우트 핸들러가 관리자 세션 쿠키 검증 성공 시에만 백엔드 FastAPI에 `X-Admin-Key` 헤더를 주입하여 포워딩.
+- 검증:
+  - `node tests/test-phase2-7-csrf-and-quote-status.cjs`: CSRF Origin/Referer 검증 차단/허용, 5개 시세 상태 배지 분리, 서버 ADMIN_API_KEY 격리 등 전체 통과 (100%).
+  - `node tests/test-phase2-5-admin-security.cjs`: 관리자 인증/백엔드 프록시 테스트 통과 (100%).
+  - `node tests/test-chart-panel-render.cjs`: 차트 및 패널 SSR 6/6 상태 렌더링 통과 (100%).
+  - `npx tsc --noEmit`: 0 errors 무오류 통과.
+- 남은 보안 위험:
+  - 서버리스 분산 환경 로그인 Rate Limiting: 현재 단일 인스턴스 인메모리 방식이며, 분산 다중 인스턴스 방어를 위해 Cloudflare WAF(무료) 또는 Upstash Redis 도입 필요.
+  - 무상태 서명 토큰 즉시 강제 폐기(Blacklist): 로그아웃 시 클라이언트 쿠키는 삭제되나, 이미 발행된 토큰은 1시간 자연 만료에 의존. 긴급 시 `ADMIN_SESSION_SECRET` 회전으로 전역 무효화 가능.
+- 운영 환경 상태:
+  - DB 쓰기 및 마이그레이션 실행 없음.
+  - Neon 브랜치 생성·삭제 없음.
+  - Worker·Cron 실행 없음.
+  - 실제 KIS API 호출 없음.
+  - GitHub Push·PR 변경, main 병합, Vercel 배포 없음.

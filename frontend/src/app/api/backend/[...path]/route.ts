@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ADMIN_COOKIE_NAME, verifySessionToken } from '@/lib/server-auth';
+import { ADMIN_COOKIE_NAME, isSafeOrigin, verifySessionToken } from '@/lib/server-auth';
 
 const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:8000';
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
@@ -55,8 +55,18 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const { path } = await context.params;
   const pathSegments = path || [];
   const method = request.method;
+  const normMethod = method.toUpperCase();
 
-  // 1. Check if caller has verified admin session or internal admin header
+  // 1. CSRF Protection: Validate Origin for all state-mutating requests (POST, PUT, PATCH, DELETE)
+  const isMutation = !['GET', 'HEAD'].includes(normMethod);
+  if (isMutation && !isSafeOrigin(request)) {
+    return NextResponse.json(
+      { detail: '비정상적인 요청 출처(Origin)입니다.', error_code: 'CSRF_ORIGIN_INVALID' },
+      { status: 403 }
+    );
+  }
+
+  // 2. Check if caller has verified admin session or internal admin header
   const sessionCookie = request.cookies.get(ADMIN_COOKIE_NAME)?.value;
   const sessionCheck = verifySessionToken(sessionCookie);
 
@@ -66,7 +76,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
 
   const requiresAuth = isProtectedAdminRoute(method, pathSegments);
 
-  // 2. Reject unauthenticated access to admin routes
+  // 3. Reject unauthenticated access to admin routes
   if (requiresAuth && !isAuthorizedAdmin) {
     return NextResponse.json(
       { detail: '관리자 인증이 필요합니다.', error_code: 'ADMIN_AUTH_REQUIRED' },
@@ -74,7 +84,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     );
   }
 
-  // 3. For authorized admin requests, ensure backend ADMIN_API_KEY is configured
+  // 4. For authorized admin requests, ensure backend ADMIN_API_KEY is configured
   if (requiresAuth && !ADMIN_API_KEY) {
     return NextResponse.json(
       { detail: '서버 환경 설정(ADMIN_API_KEY)이 누락되었습니다.', error_code: 'SERVER_CONFIG_ERROR' },
@@ -82,7 +92,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     );
   }
 
-  // 4. Forward to backend
+  // 5. Forward to backend
   const incoming = new URL(request.url);
   const target = new URL(`/api/v1/${pathSegments.join('/')}`, BACKEND_URL);
   target.search = incoming.search;

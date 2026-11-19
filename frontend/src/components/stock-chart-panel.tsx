@@ -215,6 +215,19 @@ export function StockChartPanel({
               <span className="text-xs px-2.5 py-0.5 rounded font-bold bg-amber-100 text-amber-900 border border-amber-300">
                 DEMO · 실제 시세 아님
               </span>
+            ) : isLoading ? (
+              <span className="text-xs px-2.5 py-0.5 rounded font-medium bg-slate-100 text-slate-600 border border-slate-200 flex items-center gap-1">
+                <RefreshCw size={11} className="animate-spin" />
+                시세 조회 중...
+              </span>
+            ) : quoteStatus === 'error' ? (
+              <span className="text-xs px-2.5 py-0.5 rounded font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                시세 조회 실패
+              </span>
+            ) : quoteStatus === 'empty' || !quote ? (
+              <span className="text-xs px-2.5 py-0.5 rounded font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                시세 데이터 없음
+              </span>
             ) : (
               <span className="text-xs px-2.5 py-0.5 rounded font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                 출처: KIS 실측 시세

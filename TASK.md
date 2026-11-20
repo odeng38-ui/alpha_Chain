@@ -317,7 +317,38 @@
   - GitHub Push·PR 변경, main 병합, Vercel 배포 없음.
 
 
-## AC-KIS-P3.1: Phase 3.1 종목 분석 KIS 온디맨드 연동
+## AC-KIS-P3.2: Phase 3.2 사용자 조회 권한 분리
+
+- 작업:
+  1. `VIEWER`와 `ADMIN` 역할 분리:
+     - Admin: 1시간 유효, `alphachain_admin_session`, `ADMIN_PASSWORD_HASH`, `ADMIN_SESSION_SECRET`, 관리자 전용 API 및 KIS 시세 접근.
+     - Viewer: 7일 유효, `alphachain_viewer_session`, `VIEWER_PASSWORD_HASH`, `VIEWER_SESSION_SECRET`, KIS 현재가/과거 캔들 GET 전용 접근.
+  2. 서버 측 암호화 세션 및 쿠키 격리:
+     - Scrypt 솔트 해시 독립 검증 및 HMAC-SHA256 서명 키 분리 (상호 위조 및 교차 주입 차단).
+     - HttpOnly, SameSite=Lax, Secure 쿠키 발급.
+  3. 백엔드 관리자 프록시(`[...path]`) 권한 상승 차단:
+     - Viewer 세션은 관리자 권한(`isAuthorizedAdmin`)을 획득할 수 없으며, 모든 상태 변경(POST/PUT/PATCH/DELETE) 및 관리자 경로(admin, sec, backtests 등) 접근 시 401 차단.
+     - 내부 `ADMIN_API_KEY`는 Viewer 요청에 절대 주입되지 않음.
+  4. Preview 전용 활성화 게이팅:
+     - `isViewerAuthEnabled()`: `VERCEL_ENV === 'preview'` 또는 `ENABLE_VIEWER_AUTH === 'true'` 시에만 활성화. Production에서는 명시적 승인 전까지 비활성화(fail-closed).
+  5. UI 및 로그아웃 분리:
+     - `StockChartPanel`에서 일반 조회(7일)와 관리자(1시간) 탭을 명확히 구분하여 제공.
+     - 사용자 로그아웃(`viewerLogout`)과 관리자 로그아웃(`adminLogout`) 분리 및 로그아웃 시 실측 캐시(`:real`) 즉시 완전 파기.
+- 검증:
+  - `node tests/test-phase3-2-viewer-auth.cjs`: 8개 테스트 100% 통과.
+  - `node tests/test-phase3-1-stock-analysis-kis.cjs`: 100% 통과.
+  - `node tests/test-phase2-8-csrf-strict.cjs`: 100% 통과.
+  - `node tests/test-phase2-7-csrf-and-quote-status.cjs`: 100% 통과.
+  - `node tests/test-phase2-5-admin-security.cjs`: 100% 통과.
+  - `node tests/test-admin-auth.cjs`: 100% 통과.
+  - `npx tsc --noEmit`: 0 errors 무오류 통과.
+- 운영 환경 상태:
+  - DB 구조 및 데이터 변경 없음.
+  - Worker·Cron 실행 없음.
+  - 실제 KIS API 호출 없음.
+  - Neon 변경 없음.
+  - Production 배포 및 main 병합 없음.
+  - GitHub Push 및 PR 변경 없음.
 
 - 작업:
   1. 기능 브랜치 `feat/ac-stock-analysis-kis` 생성 (최신 `main` 6483bf8 기준).

@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { CandlePeriod } from '@/lib/kis-types';
 import { getMockHistorical } from '@/lib/kis-mock-data';
-import { ADMIN_COOKIE_NAME, verifySessionToken } from '@/lib/server-auth';
+import { verifyCallerSession } from '@/lib/server-auth';
 
 const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:8000';
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
@@ -48,20 +48,18 @@ export async function GET(
     return NextResponse.json(getMockHistorical(ticker, period));
   }
 
-  // 3. Security check: verify admin session cookie or administrative header
-  const sessionToken = request.cookies.get(ADMIN_COOKIE_NAME)?.value;
-  const sessionCheck = verifySessionToken(sessionToken);
-
+  // 3. Security check: verify viewer or admin session cookie, or administrative header
+  const sessionCheck = verifyCallerSession(request);
   const headerAdminKey = request.headers.get('X-Admin-Key');
-  const isAuthorized = sessionCheck.valid || (headerAdminKey && ADMIN_API_KEY && headerAdminKey === ADMIN_API_KEY);
+  const isAuthorized = sessionCheck.isAuthorized || (headerAdminKey && ADMIN_API_KEY && headerAdminKey === ADMIN_API_KEY);
 
   if (!isAuthorized) {
     return NextResponse.json(
       {
-        detail: 'KIS 과거 캔들 조회를 위해서는 관리자 로그인이 필요합니다.',
+        detail: 'KIS 과거 캔들 조회를 위해서는 일반 조회(Viewer) 또는 관리자 로그인이 필요합니다.',
         code: 'ADMIN_AUTH_REQUIRED',
         status: 'BLOCKED',
-        reason: sessionCheck.reason ?? '관리자 인증 세션이 없습니다.',
+        reason: sessionCheck.reason ?? '인증 세션이 없습니다.',
       },
       { status: 401 }
     );

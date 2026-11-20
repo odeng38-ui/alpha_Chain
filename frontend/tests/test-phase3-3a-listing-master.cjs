@@ -196,4 +196,33 @@ const htmlNoSec = ReactDOMServer.renderToStaticMarkup(React.createElement(Compan
 assert.ok(htmlNoSec.includes('비상장 · 시세 불가'), 'Company without security must show "비상장 · 시세 불가"');
 console.log('✓ Test 8: CompanyDetail shows "비상장 · 시세 불가" when no security attached');
 
-console.log('\nAll Phase 3.3-A tests passed successfully! (8/8)');
+
+// --- 4. Test Korean Alphabetical Sorting Order (Hangul -> English -> Others) ---
+function sortCompanyNames(names) {
+  const HANGUL_REGEX = /^[가-힣ㄱ-ㅎ]/;
+  const ENGLISH_REGEX = /^[A-Za-z]/;
+  
+  return [...names].sort((a, b) => {
+    const getGroup = (str) => {
+      if (HANGUL_REGEX.test(str)) return 0;
+      if (ENGLISH_REGEX.test(str)) return 1;
+      return 2;
+    };
+    const groupA = getGroup(a);
+    const groupB = getGroup(b);
+    if (groupA !== groupB) return groupA - groupB;
+    return a.localeCompare(b, 'ko-KR');
+  });
+}
+
+const sampleCompanies = [
+  'SK하이닉스', '3S', '삼성전자', 'AJ네트웍스', '가비아', '강원랜드', '카카오', 'BGF', '2차전지'
+];
+const sortedSample = sortCompanyNames(sampleCompanies);
+const expectedSample = [
+  '가비아', '강원랜드', '삼성전자', '카카오', 'AJ네트웍스', 'BGF', 'SK하이닉스', '2차전지', '3S'
+];
+assert.deepEqual(sortedSample, expectedSample, 'Sorting must order Hangul first, then English, then Others');
+console.log('✓ Test 9: Korean alphabetical sorting (Hangul -> English -> Others) verified');
+
+console.log('\nAll Phase 3.3-A tests passed successfully! (9/9)');

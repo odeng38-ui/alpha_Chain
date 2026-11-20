@@ -53,10 +53,9 @@ export default function Home() {
       const [dashboardData, companyData, newsData, impactStatus] = await Promise.all([
         getDashboard(asOf),
         getCompanies({
-          query: query.trim() || undefined,
-          market: marketFilter,
-          status: statusFilter,
-          sort_by: sortBy,
+          market: 'ALL',
+          status: 'ALL',
+          sort_by: 'name',
           page: 1,
           page_size: 50,
         }),
@@ -76,12 +75,13 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [asOf, query, marketFilter, statusFilter, sortBy]);
+  }, [asOf]);
 
   useEffect(() => { void loadBase(); }, [loadBase, refreshKey]);
 
   useEffect(() => {
     if (view === 'market' || view === 'events' || view === 'news') return;
+    let active = true;
     const timer = window.setTimeout(() => {
       void getCompanies({
         query: query.trim() || undefined,
@@ -92,14 +92,21 @@ export default function Home() {
         page_size: 50,
       })
         .then((result) => {
+          if (!active) return;
           setCompanies(result.data);
           setPage(1);
           setHasMore(result.has_more);
           setTotalCount(result.total_count);
         })
-        .catch((reason) => setError(reason instanceof Error ? reason.message : '기업 검색에 실패했습니다.'));
+        .catch((reason) => {
+          if (!active) return;
+          setError(reason instanceof Error ? reason.message : '기업 검색에 실패했습니다.');
+        });
     }, 250);
-    return () => window.clearTimeout(timer);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
   }, [query, marketFilter, statusFilter, sortBy, view]);
 
   const handleLoadMore = useCallback(async () => {
@@ -115,7 +122,11 @@ export default function Home() {
         page: nextPage,
         page_size: 50,
       });
-      setCompanies((prev) => [...prev, ...result.data]);
+      setCompanies((prev) => {
+        const existingIds = new Set(prev.map((c) => c.company_id));
+        const newItems = result.data.filter((c) => !existingIds.has(c.company_id));
+        return [...prev, ...newItems];
+      });
       setPage(nextPage);
       setHasMore(result.has_more);
       setTotalCount(result.total_count);
@@ -239,7 +250,10 @@ export default function Home() {
                   <button
                     key={m}
                     type="button"
-                    onClick={() => setMarketFilter(m)}
+                    onClick={() => {
+                      setMarketFilter(m);
+                      setPage(1);
+                    }}
                     className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
                       marketFilter === m
                         ? 'bg-slate-700 text-white font-semibold'
@@ -258,7 +272,10 @@ export default function Home() {
                     <button
                       key={st}
                       type="button"
-                      onClick={() => setStatusFilter(st)}
+                      onClick={() => {
+                        setStatusFilter(st);
+                        setPage(1);
+                      }}
                       className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
                         statusFilter === st
                           ? 'bg-emerald-800 text-emerald-100 font-semibold'
@@ -271,7 +288,10 @@ export default function Home() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setSortBy((prev) => (prev === 'name' ? 'ticker' : 'name'))}
+                  onClick={() => {
+                    setSortBy((prev) => (prev === 'name' ? 'ticker' : 'name'));
+                    setPage(1);
+                  }}
                   className="px-1.5 py-0.5 rounded text-[10px] bg-slate-900/60 text-slate-400 hover:text-slate-200"
                   title="정렬 기준 변경"
                 >

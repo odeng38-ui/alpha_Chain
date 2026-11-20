@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import case, func, or_
+from sqlalchemy import case, collate, func, or_, text
 from sqlalchemy.orm import Session, load_only
 
 from app.config import settings
@@ -15,6 +15,38 @@ from app.services.master_service import CompanySecurityMasterService
 from app.services.report_service import MappingReportService
 
 router = APIRouter(prefix="/master", tags=["Master & Identification"])
+
+
+_korean_collation_cache: Optional[str] = None
+
+
+def get_korean_collation(db: Session) -> Optional[str]:
+    """PostgreSQL에서 사용 가능한 한국어 Collation을 조회하여 캐시.
+    미지원 환경에서는 None을 반환하여 안전하게 폴백.
+    """
+    global _korean_collation_cache
+    if _korean_collation_cache is not None:
+        return _korean_collation_cache or None
+    try:
+        bind = db.get_bind()
+        if bind is not None and bind.dialect.name == "postgresql":
+            row = db.execute(
+                text(
+                    "SELECT collname FROM pg_collation "
+                    "WHERE collname IN ('ko-KR-x-icu', 'ko-x-icu', 'ko_KR.utf8', 'ko_KR.UTF-8') "
+                    "ORDER BY CASE collname "
+                    "WHEN 'ko-KR-x-icu' THEN 1 "
+                    "WHEN 'ko-x-icu' THEN 2 "
+                    "WHEN 'ko_KR.utf8' THEN 3 "
+                    "ELSE 4 END LIMIT 1;"
+                )
+            ).scalar()
+            _korean_collation_cache = str(row) if row else ""
+        else:
+            _korean_collation_cache = ""
+    except Exception:
+        _korean_collation_cache = ""
+    return _korean_collation_cache or None
 
 
 def classify_security_listing_status(s: Security) -> str:
@@ -147,10 +179,33 @@ def search_companies(
         else:
             order_expressions.append(sec_ticker_subq.asc())
     else:
-        if sort_order.lower() == "desc":
-            order_expressions.append(Company.name.desc())
+        # Korean Hangul (0) -> English Alphabet (1) -> Other symbols/numbers (2)
+        bind = db.get_bind()
+        is_pg = bind is not None and bind.dialect.name == "postgresql"
+        if is_pg:
+            name_group = case(
+                (Company.name.op("~")("^[가-힣ㄱ-ㅎ]"), 0),
+                (Company.name.op("~")("^[A-Za-z]"), 1),
+                else_=2,
+            )
         else:
-            order_expressions.append(Company.name.asc())
+            first_char = func.substr(Company.name, 1, 1)
+            first_lower = func.lower(first_char)
+            name_group = case(
+                ((first_char >= "가") & (first_char <= "힣"), 0),
+                ((first_lower >= "a") & (first_lower <= "z"), 1),
+                else_=2,
+            )
+
+        k_coll = get_korean_collation(db) if is_pg else None
+        name_col = collate(Company.name, k_coll) if k_coll else Company.name
+
+        if sort_order.lower() == "desc":
+            order_expressions.append(name_group.desc())
+            order_expressions.append(name_col.desc())
+        else:
+            order_expressions.append(name_group.asc())
+            order_expressions.append(name_col.asc())
 
     # Stable tie breaker
     order_expressions.append(Company.id.asc())

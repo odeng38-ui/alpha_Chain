@@ -24,8 +24,13 @@
   - Worker/Cron 실행 없음
   - KIS 외부 API 호출 0건
   - main 병합 및 Production 배포 없음
+  5. Ruff I001 수정 및 상장폐지일 분리 관리:
+     - `test_krx_listing_provider.py` Ruff I001 import 정렬 오류 수정 완료.
+     - `krx_listing_reference.json` 상장폐지일 누락 원인: 공식 KIND `searchType=14` 원본에 상장일 컬럼만 존재하고 폐지일 컬럼 부재 확인.
+     - 무결성 원칙 준수: 임의의 폐지일 생성 금지, `delisted_at: None`, `delisted_at_verified: False`로 상태와 일자 확인 분리 관리.
+     - DB에 검증된 `db_delisted_at`이 제공될 때만 폐지일 매핑 및 `delisted_at_verified=True` 처리.
 - 다음 한 가지 작업:
-  - 변경사항 PR #18 브랜치에 커밋 및 Push, GitHub CI 및 Preview 상태 확인.
+  - 수정사항 PR #18 브랜치에 커밋 및 Push, GitHub CI 및 Preview 상태 확인.
 
 ---
 

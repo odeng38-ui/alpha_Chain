@@ -1,10 +1,14 @@
+from datetime import date
+
 from app.adapters.krx_listing_provider import KrxListingProvider
+
 
 def test_krx_listing_provider_singleton():
     provider = KrxListingProvider.get_instance()
     assert provider.is_available is True
     assert provider.as_of_date == "2026-11-20"
     assert provider.source_name == "KRX_KIND"
+
 
 def test_target_stocks_verification():
     provider = KrxListingProvider.get_instance()
@@ -47,16 +51,32 @@ def test_target_stocks_verification():
     assert dy.listed_at == "2026-01-30"
 
     # 7. 원익피앤이 과거 종목 131390 -> DELISTED
+    # 공식 원본에 상장폐지일 컬럼 부재로 delisted_at is None, delisted_at_verified is False
     pne_old = provider.verify_security("131390", company_name="원익피앤이")
     assert pne_old.status == "DELISTED"
     assert pne_old.market == "KOSDAQ"
     assert pne_old.listed_at == "2011-09-27"
+    assert pne_old.delisted_at is None
+    assert pne_old.delisted_at_verified is False
 
     # 8. 엔에스아이 053250 -> DELISTED
     nsi = provider.verify_security("053250", company_name="엔에스아이")
     assert nsi.status == "DELISTED"
     assert nsi.market == "KOSDAQ"
     assert nsi.listed_at == "2001-07-20"
+    assert nsi.delisted_at is None
+    assert nsi.delisted_at_verified is False
+
+    # 9. DB 폐지일이 전달되었을 때 폐지일 매핑 및 delisted_at_verified=True 검증
+    pne_with_db = provider.verify_security(
+        "131390",
+        company_name="원익피앤이",
+        db_delisted_at=date(2021, 2, 26),
+    )
+    assert pne_with_db.status == "DELISTED"
+    assert pne_with_db.delisted_at == "2021-02-26"
+    assert pne_with_db.delisted_at_verified is True
+
 
 def test_unregistered_fallback_to_unknown():
     provider = KrxListingProvider.get_instance()
@@ -64,8 +84,8 @@ def test_unregistered_fallback_to_unknown():
     assert res.status == "UNKNOWN"
     assert res.verified_by_official is False
 
+
 def test_cache_failure_safe_fallback():
-    # Test with non-existent path
     dummy_provider = KrxListingProvider(reference_path="invalid_path.json")
     assert dummy_provider.is_available is False
     res = dummy_provider.verify_security("005930", company_name="삼성전자")

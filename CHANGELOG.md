@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-20
+- AC-KIS-P3.3B-TRK-A-FIX: test_krx_listing_provider.py Ruff I001 린트 수정 및 krx_listing_reference.json 상장폐지일 누락 원인 규명 (공식 원본 컬럼 부재 확인, 폐지일 임의 생성 금지, 상장폐지 상태와 폐지일 확인 여부 [delisted_at_verified] 분리 관리 구현, 단위/통합 테스트 통과).
 - AC-KIS-P3.3B-TRK-A: Phase 3.3-B Track A 안전한 상장상태 판정 개선 (KRX KIND 공식 데이터 기반 KrxListingProvider 싱글톤 캐시 구현, 4단계 우선순위 [LISTED/DELISTED/UNLISTED/UNKNOWN] 판정, 종목코드 재사용/이름 불일치 충돌 방어, API listing_source/listing_as_of 메타데이터 제공, 최소 검증 7개 종목 단위/통합 테스트 100% 통과).
 - AC-KIS-P3.3A-FIX: PR #18 버그 수정 (한국어 가나다순 정렬 [^[가-힣]] -> 영문 -> 기타 순 Collation 폴백 적용, 상단 메뉴 '종목 분석' 클릭 시 목록 첫 번째 상장기업 자동 선택 및 검색/필터 변경 시 선택 동기화, 커밋 3be24f4, 3696c37).
 - AC-KIS-P3.3B-DIAG: Phase 3.3-B 수집률 읽기 전용 정밀 진단 (DB 기업 2,810개, 증권 2,811개 [KOSPI 880, KOSDAQ 1,931, KONEX 0], 일별 가격 3,010,996건 실측 분석, KONEX 수집률 0% 및 UNKNOWN 76개 도출).

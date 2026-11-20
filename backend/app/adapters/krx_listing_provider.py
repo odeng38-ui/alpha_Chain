@@ -34,6 +34,7 @@ class KrxListingVerification:
     source: str
     as_of: str
     verified_by_official: bool
+    delisted_at_verified: bool = False
     conflict_reason: Optional[str] = None
 
 
@@ -180,16 +181,24 @@ class KrxListingProvider:
         # 2. Check official DELISTED or DB explicit delisted_at
         if clean_ticker in self._delisted:
             delisted_info = self._delisted[clean_ticker]
+            # Official delisted date if available in reference, otherwise check DB delisted_at
+            delisted_at = delisted_info.get("delisted_at")
+            delisted_at_verified = bool(delisted_info.get("delisted_at_verified", False))
+            if not delisted_at and db_delisted_at is not None:
+                delisted_at = str(db_delisted_at)
+                delisted_at_verified = True
+
             return KrxListingVerification(
                 ticker=clean_ticker,
                 status="DELISTED",
                 official_name=delisted_info.get("name"),
                 market=delisted_info.get("market"),
                 listed_at=delisted_info.get("listed_at"),
-                delisted_at=delisted_info.get("delisted_at"),
+                delisted_at=delisted_at,
                 source=source,
                 as_of=as_of,
                 verified_by_official=True,
+                delisted_at_verified=delisted_at_verified,
             )
 
         if db_delisted_at is not None:
@@ -203,6 +212,7 @@ class KrxListingProvider:
                 source="DB_DELISTED_RECORD",
                 as_of=as_of,
                 verified_by_official=True,
+                delisted_at_verified=True,
             )
 
         # 3. Not found in official listed or delisted

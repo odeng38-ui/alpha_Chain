@@ -259,6 +259,8 @@ for (const [ticker, exp] of Object.entries(expectedStatuses)) {
     assert.ok(item, `Ticker ${ticker} must be in official delisted records`);
     assert.equal(item.status, 'DELISTED');
     assert.equal(item.market, exp.market);
+    assert.equal(item.delisted_at, null, 'Official reference must NOT fabricate delisted_at');
+    assert.equal(item.delisted_at_verified, false, 'delisted_at_verified must be false when date is absent in official source');
   }
 }
 console.log('✓ Test 10: Official KRX KIND reference verification passed for all 7 target stocks');

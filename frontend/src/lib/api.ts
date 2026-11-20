@@ -1,6 +1,7 @@
 import type { CompanyDetailData, CompanySummary, DashboardData, EventFirstAnalysis, GlobalEventSummary, GraphData, NewsImpactData, NewsImpactStatus } from './types';
 import type { CandlePeriod, KisCurrentQuoteData, KisHistoricalQuotesData } from './kis-types';
 import { getMockHistorical, getMockQuote } from './kis-mock-data';
+import { clearRealKisCache } from './kis-cache';
 
 async function api<T>(path: string): Promise<T> {
   const response = await fetch(`/api/backend/${path}`, { cache: 'no-store' });
@@ -80,15 +81,24 @@ export async function getKisHistoricalQuotes(
   return (await res.json()) as KisHistoricalQuotesData;
 }
 
-export async function checkAdminSession(): Promise<{ authenticated: boolean; role?: string | null }> {
+export interface UserSessionStatus {
+  authenticated: boolean;
+  role?: 'admin' | 'viewer' | null;
+  expires_at?: string | null;
+  viewer_auth_enabled?: boolean;
+}
+
+export async function checkAdminSession(): Promise<UserSessionStatus> {
   try {
     const res = await fetch('/api/auth/session', { cache: 'no-store' });
     if (!res.ok) return { authenticated: false };
-    return (await res.json()) as { authenticated: boolean; role?: string | null };
+    return (await res.json()) as UserSessionStatus;
   } catch {
     return { authenticated: false };
   }
 }
+
+export const checkUserSession = checkAdminSession;
 
 export async function adminLogin(password: string): Promise<{ success: boolean; detail?: string }> {
   try {
@@ -99,7 +109,7 @@ export async function adminLogin(password: string): Promise<{ success: boolean; 
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      return { success: false, detail: err.detail ?? '로그인에 실패했습니다.' };
+      return { success: false, detail: err.detail ?? '관리자 로그인에 실패했습니다.' };
     }
     return { success: true };
   } catch {
@@ -108,8 +118,36 @@ export async function adminLogin(password: string): Promise<{ success: boolean; 
 }
 
 export async function adminLogout(): Promise<{ success: boolean }> {
+  clearRealKisCache();
   try {
     const res = await fetch('/api/auth/logout', { method: 'POST' });
+    return { success: res.ok };
+  } catch {
+    return { success: false };
+  }
+}
+
+export async function viewerLogin(password: string): Promise<{ success: boolean; detail?: string }> {
+  try {
+    const res = await fetch('/api/auth/viewer/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { success: false, detail: err.detail ?? '일반 조회 로그인에 실패했습니다.' };
+    }
+    return { success: true };
+  } catch {
+    return { success: false, detail: '조회 로그인 요청 중 네트워크 오류가 발생했습니다.' };
+  }
+}
+
+export async function viewerLogout(): Promise<{ success: boolean }> {
+  clearRealKisCache();
+  try {
+    const res = await fetch('/api/auth/viewer/logout', { method: 'POST' });
     return { success: res.ok };
   } catch {
     return { success: false };

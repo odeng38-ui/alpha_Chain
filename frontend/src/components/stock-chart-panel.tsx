@@ -8,6 +8,7 @@ import {
   Check,
   ChevronDown,
   Clock,
+  Eye,
   Key,
   Layers,
   Lock,
@@ -23,6 +24,8 @@ import {
   checkAdminSession,
   getKisCurrentQuote,
   getKisHistoricalQuotes,
+  viewerLogin,
+  viewerLogout,
 } from '@/lib/api';
 import type {
   CandlePeriod,
@@ -33,6 +36,14 @@ import type {
   SMAConfig,
 } from '@/lib/kis-types';
 import { DEFAULT_SMA_CONFIG, SMA_COLORS } from '@/lib/kis-types';
+import {
+  clearKisCache,
+  clearRealKisCache,
+  getCachedHistory,
+  getCachedQuote,
+  setCachedHistory,
+  setCachedQuote,
+} from '@/lib/kis-cache';
 import { calculateMultipleSMAs } from '@/lib/moving-average';
 import { StockCandlestickChart } from './stock-candlestick-chart';
 import { StockVolumeChart } from './stock-volume-chart';
@@ -67,18 +78,35 @@ export function StockChartPanel({
 
   const [reloadTrigger, setReloadTrigger] = useState(0);
 
-  // Admin Session State
-  const [isAdmin, setIsAdmin] = useState(false);
+  // Session State (Role: admin | viewer | null)
+  const [sessionRole, setSessionRole] = useState<'admin' | 'viewer' | null>(null);
+  const [viewerAuthEnabled, setViewerAuthEnabled] = useState(true);
+  const [loginTab, setLoginTab] = useState<'viewer' | 'admin'>('viewer');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
 
-  // Check Admin Session
+  const isAuthenticated = sessionRole === 'admin' || sessionRole === 'viewer';
+  const isAdmin = sessionRole === 'admin';
+
+  // Check Session (Admin or Viewer)
   useEffect(() => {
     let active = true;
     checkAdminSession().then((res) => {
-      if (active) setIsAdmin(res.authenticated);
+      if (!active) return;
+      if (res.authenticated && res.role) {
+        setSessionRole(res.role as 'admin' | 'viewer');
+      } else {
+        setSessionRole(null);
+        clearRealKisCache();
+      }
+      if (res.viewer_auth_enabled !== undefined) {
+        setViewerAuthEnabled(res.viewer_auth_enabled);
+        if (!res.viewer_auth_enabled) {
+          setLoginTab('admin');
+        }
+      }
     });
     return () => {
       active = false;
@@ -88,12 +116,26 @@ export function StockChartPanel({
   // Fetch Current Quote
   useEffect(() => {
     let active = true;
+    const mode = chartMode;
+
+    // Check client cache first (60s TTL)
+    const cached = getCachedQuote(ticker, mode);
+    if (cached) {
+      setQuote(cached);
+      setQuoteStatus('success');
+      setErrorMessage('');
+      return;
+    }
+
+    // Clear stale quote immediately on ticker change
+    setQuote(null);
     setQuoteStatus('loading');
     setErrorMessage('');
 
-    getKisCurrentQuote(ticker, { demo: chartMode === 'demo' })
+    getKisCurrentQuote(ticker, { demo: mode === 'demo' })
       .then((data) => {
         if (!active) return;
+        setCachedQuote(ticker, mode, data);
         setQuote(data);
         setQuoteStatus('success');
       })
@@ -112,12 +154,29 @@ export function StockChartPanel({
   // Fetch Historical Candles
   useEffect(() => {
     let active = true;
-    setHistoryStatus('loading');
+    const mode = chartMode;
     setSelectedIndex(null);
 
-    getKisHistoricalQuotes(ticker, period, { demo: chartMode === 'demo' })
+    // Check client cache first (10m TTL for selected timeframe)
+    const cached = getCachedHistory(ticker, period, mode);
+    if (cached) {
+      setHistory(cached);
+      if (!cached.candles || cached.candles.length === 0) {
+        setHistoryStatus('empty');
+      } else {
+        setHistoryStatus('success');
+      }
+      return;
+    }
+
+    // Clear stale history immediately on ticker/period change
+    setHistory(null);
+    setHistoryStatus('loading');
+
+    getKisHistoricalQuotes(ticker, period, { demo: mode === 'demo' })
       .then((data) => {
         if (!active) return;
+        setCachedHistory(ticker, period, mode, data);
         setHistory(data);
         if (!data.candles || data.candles.length === 0) {
           setHistoryStatus('empty');
@@ -150,6 +209,7 @@ export function StockChartPanel({
   };
 
   const handleRefresh = () => {
+    clearKisCache(ticker);
     setReloadTrigger((v) => v + 1);
   };
 
@@ -159,11 +219,15 @@ export function StockChartPanel({
     setIsLoggingIn(true);
     setLoginError('');
 
-    const res = await adminLogin(loginPassword);
+    const res =
+      loginTab === 'viewer'
+        ? await viewerLogin(loginPassword)
+        : await adminLogin(loginPassword);
+
     setIsLoggingIn(false);
 
     if (res.success) {
-      setIsAdmin(true);
+      setSessionRole(loginTab);
       setLoginPassword('');
       setShowLoginModal(false);
       setReloadTrigger((v) => v + 1);
@@ -172,11 +236,25 @@ export function StockChartPanel({
     }
   };
 
-  const handleLogout = async () => {
+  const handleAdminLogout = async () => {
+    clearRealKisCache();
     await adminLogout();
-    setIsAdmin(false);
+    setSessionRole(null);
+    setQuote(null);
+    setHistory(null);
     setReloadTrigger((v) => v + 1);
   };
+
+  const handleViewerLogout = async () => {
+    clearRealKisCache();
+    await viewerLogout();
+    setSessionRole(null);
+    setQuote(null);
+    setHistory(null);
+    setReloadTrigger((v) => v + 1);
+  };
+
+  const handleLogout = isAdmin ? handleAdminLogout : handleViewerLogout;
 
   // Inspect candle details
   const inspectedCandle = useMemo(() => {
@@ -233,12 +311,23 @@ export function StockChartPanel({
                 출처: KIS 실측 시세
               </span>
             )}
-            {isAdmin ? (
+            {sessionRole === 'admin' ? (
               <span className="text-xs px-2 py-0.5 rounded font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
                 <Lock size={11} /> 관리자 인증됨
                 <button
                   type="button"
-                  onClick={handleLogout}
+                  onClick={handleAdminLogout}
+                  className="ml-1 text-slate-500 hover:text-red-700 underline font-normal"
+                >
+                  로그아웃
+                </button>
+              </span>
+            ) : sessionRole === 'viewer' ? (
+              <span className="text-xs px-2 py-0.5 rounded font-semibold bg-blue-100 text-blue-800 border border-blue-300 flex items-center gap-1">
+                <Eye size={11} /> 일반 조회 인증됨 (7일)
+                <button
+                  type="button"
+                  onClick={handleViewerLogout}
                   className="ml-1 text-slate-500 hover:text-red-700 underline font-normal"
                 >
                   로그아웃
@@ -250,7 +339,7 @@ export function StockChartPanel({
                 onClick={() => setShowLoginModal(true)}
                 className="text-xs px-2 py-0.5 rounded font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200 flex items-center gap-1 transition"
               >
-                <Key size={11} /> 관리자 로그인
+                <Key size={11} /> 시세 조회 로그인
               </button>
             )}
           </div>
@@ -305,13 +394,13 @@ export function StockChartPanel({
         </div>
       </div>
 
-      {/* Admin Login Dialog Modal */}
+      {/* Login Dialog Modal */}
       {showLoginModal && (
         <div className="my-3 p-4 bg-slate-50 rounded-lg border border-slate-300 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-1.5 font-bold text-sm text-slate-900">
               <Key size={15} className="text-blue-600" />
-              <span>관리자 로그인 (실전 KIS 시세 세션 활성화)</span>
+              <span>실시간 KIS 시세 조회 로그인</span>
             </div>
             <button
               type="button"
@@ -321,21 +410,58 @@ export function StockChartPanel({
               <X size={16} />
             </button>
           </div>
+
+          {/* Role Tabs */}
+          <div className="flex border-b border-slate-200 mb-3 text-xs font-medium">
+            <button
+              type="button"
+              onClick={() => { setLoginTab('viewer'); setLoginError(''); }}
+              className={`pb-2 px-3 border-b-2 transition flex items-center gap-1.5 ${
+                loginTab === 'viewer'
+                  ? 'border-blue-600 text-blue-600 font-bold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Eye size={13} />
+              일반 조회 로그인 (7일간 유효)
+            </button>
+            <button
+              type="button"
+              onClick={() => { setLoginTab('admin'); setLoginError(''); }}
+              className={`pb-2 px-3 border-b-2 transition flex items-center gap-1.5 ${
+                loginTab === 'admin'
+                  ? 'border-blue-600 text-blue-600 font-bold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Lock size={13} />
+              관리자 로그인 (1시간)
+            </button>
+          </div>
+
+          <p className="text-xs text-slate-600 mb-2">
+            {loginTab === 'viewer'
+              ? (viewerAuthEnabled
+                  ? '※ Preview 테스트 전용 일반 조회 계정입니다. 로그인 시 7일 동안 KIS 실시간 시세 차트를 이용할 수 있습니다.'
+                  : '※ 현재 환경에서는 일반 조회가 비활성화되어 있습니다 (Preview 전용).')
+              : '※ 운영 관리자 전용 계정입니다. 1시간 세션 및 운영 관리 기능을 포함합니다.'}
+          </p>
+
           <form onSubmit={handleLoginSubmit} className="flex flex-col sm:flex-row gap-2 mt-2">
             <input
               type="password"
               value={loginPassword}
               onChange={(e) => setLoginPassword(e.target.value)}
-              placeholder="관리자 비밀번호를 입력하세요"
+              placeholder={loginTab === 'viewer' ? '일반 조회 비밀번호를 입력하세요' : '관리자 비밀번호를 입력하세요'}
               className="flex-1 px-3 py-1.5 text-xs rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
             />
             <div className="flex gap-2">
               <button
                 type="submit"
-                disabled={isLoggingIn}
+                disabled={isLoggingIn || (loginTab === 'viewer' && !viewerAuthEnabled)}
                 className="px-4 py-1.5 text-xs font-semibold rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 transition"
               >
-                {isLoggingIn ? '인증 중...' : '로그인'}
+                {isLoggingIn ? '인증 중...' : loginTab === 'viewer' ? '조회 로그인' : '관리자 로그인'}
               </button>
               <button
                 type="button"
@@ -521,31 +647,56 @@ export function StockChartPanel({
               <p className="text-xs text-red-700 mb-3">{errorMessage || '시세 캔들 데이터를 불러올 수 없습니다.'}</p>
 
               {/* In-place login form when unauthenticated */}
-              {!isAdmin && (
-                <form onSubmit={handleLoginSubmit} className="my-3 p-3 bg-white rounded border border-red-200 text-left">
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    관리자 로그인 (실전 KIS 시세 활성화)
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="관리자 비밀번호"
-                      className="flex-1 px-2.5 py-1.5 text-xs rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    />
+              {!isAuthenticated && (
+                <div className="my-3 p-3 bg-white rounded border border-red-200 text-left">
+                  <div className="flex border-b border-slate-200 mb-2 text-xs font-medium">
                     <button
-                      type="submit"
-                      disabled={isLoggingIn}
-                      className="px-3 py-1.5 text-xs font-semibold rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 transition"
+                      type="button"
+                      onClick={() => { setLoginTab('viewer'); setLoginError(''); }}
+                      className={`pb-1 px-2 border-b-2 transition flex items-center gap-1 ${
+                        loginTab === 'viewer'
+                          ? 'border-blue-600 text-blue-600 font-bold'
+                          : 'border-transparent text-slate-500 hover:text-slate-800'
+                      }`}
                     >
-                      {isLoggingIn ? '확인 중...' : '로그인'}
+                      <Eye size={12} />
+                      일반 조회 (7일)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setLoginTab('admin'); setLoginError(''); }}
+                      className={`pb-1 px-2 border-b-2 transition flex items-center gap-1 ${
+                        loginTab === 'admin'
+                          ? 'border-blue-600 text-blue-600 font-bold'
+                          : 'border-transparent text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      <Lock size={12} />
+                      관리자 (1시간)
                     </button>
                   </div>
-                  {loginError && (
-                    <p className="text-[11px] text-red-600 mt-1 font-medium">{loginError}</p>
-                  )}
-                </form>
+                  <form onSubmit={handleLoginSubmit} className="mt-1">
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        placeholder={loginTab === 'viewer' ? '일반 조회 비밀번호' : '관리자 비밀번호'}
+                        className="flex-1 px-2.5 py-1.5 text-xs rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                      <button
+                        type="submit"
+                        disabled={isLoggingIn || (loginTab === 'viewer' && !viewerAuthEnabled)}
+                        className="px-3 py-1.5 text-xs font-semibold rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 transition"
+                      >
+                        {isLoggingIn ? '확인 중...' : '로그인'}
+                      </button>
+                    </div>
+                    {loginError && (
+                      <p className="text-[11px] text-red-600 mt-1 font-medium">{loginError}</p>
+                    )}
+                  </form>
+                </div>
               )}
 
               <div className="flex justify-center gap-2 text-xs mt-2">

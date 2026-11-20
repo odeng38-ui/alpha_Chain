@@ -60,9 +60,11 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const requiresAuth = isProtectedAdminRoute(method, pathSegments);
 
   // 1. Identify Authentication Credentials (Session Cookie vs. Server-to-Server X-Admin-Key)
+  // Strict Role Separation: Only verified 'admin' sessions grant backend administration privileges.
+  // Viewer sessions (VIEWER_COOKIE_NAME) are strictly excluded and cannot acquire admin rights.
   const sessionCookie = request.cookies.get(ADMIN_COOKIE_NAME)?.value;
   const sessionCheck = verifySessionToken(sessionCookie);
-  const hasValidSession = Boolean(sessionCheck.valid);
+  const hasValidSession = Boolean(sessionCheck.valid && sessionCheck.payload?.role === 'admin');
 
   const headerAdminKey = request.headers.get('X-Admin-Key');
   const hasValidHeaderKey = Boolean(

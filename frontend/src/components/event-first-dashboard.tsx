@@ -140,12 +140,14 @@ function CandidateCard({
   analysis,
   onOpenChain,
   onSelectStock,
+  onSelectTicker,
   isSelectedForChart,
 }: {
   candidate: EventFirstCandidate;
   analysis: EventFirstAnalysis;
   onOpenChain?: (companyId: number) => void;
   onSelectStock?: (ticker: string, companyName: string, market?: string) => void;
+  onSelectTicker?: (ticker: string) => void;
   isSelectedForChart?: boolean;
 }) {
   const directions = relationshipDirections(candidate, analysis);
@@ -170,6 +172,17 @@ function CandidateCard({
 
       <div className="ef-candidate-actions flex items-center gap-2 my-2">
         {onOpenChain && <button onClick={() => onOpenChain(candidate.company_id)}>기존 체인맵 열기</button>}
+        {onSelectTicker && (
+          <button
+            type="button"
+            className="ef-detail-btn text-xs px-3 py-1 rounded font-semibold transition border border-slate-300 text-slate-700 hover:bg-slate-100 flex items-center gap-1.5"
+            onClick={() => onSelectTicker(candidate.ticker ?? '')}
+            title={`${candidate.company_name} 종목 상세 분석 화면으로 이동`}
+          >
+            <Building2 size={13} />
+            종목 상세 분석
+          </button>
+        )}
         {candidate.ticker ? (
           <button
             type="button"
@@ -427,7 +440,15 @@ function CandidateCard({
   );
 }
 
-export function EventFirstDashboard({ asOf, onOpenChain }: { asOf: string; onOpenChain?: (companyId: number) => void }) {
+export function EventFirstDashboard({
+  asOf,
+  onOpenChain,
+  onSelectTicker,
+}: {
+  asOf: string;
+  onOpenChain?: (companyId: number) => void;
+  onSelectTicker?: (ticker: string) => void;
+}) {
   const [events, setEvents] = useState<GlobalEventSummary[]>([]);
   const [selected, setSelected] = useState<number | string | null>(null);
   const [analysis, setAnalysis] = useState<EventFirstAnalysis | null>(null);
@@ -644,6 +665,7 @@ export function EventFirstDashboard({ asOf, onOpenChain }: { asOf: string; onOpe
                     candidate={candidate}
                     analysis={analysis}
                     onOpenChain={onOpenChain}
+                    onSelectTicker={onSelectTicker}
                     onSelectStock={(ticker, companyName, market) =>
                       setSelectedStock((prev) =>
                         prev?.ticker === ticker ? null : { ticker, companyName, market }

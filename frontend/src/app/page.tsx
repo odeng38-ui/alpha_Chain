@@ -72,26 +72,44 @@ export default function Home() {
 
   useEffect(() => {
     if (!selectedCompanyId || view === 'market' || view === 'events' || view === 'news') return;
+    let active = true;
     setLoading(true);
     setError(null);
     setSelectedEdge(null);
+    if (view === 'company') setDetail(null);
+    else setGraph(null);
+
     const request = view === 'company'
-      ? getCompanyDetail(selectedCompanyId, asOf).then(setDetail)
-      : getGraph(selectedCompanyId, direction, hops, asOf).then(setGraph);
+      ? getCompanyDetail(selectedCompanyId, asOf).then((res) => { if (active) setDetail(res); })
+      : getGraph(selectedCompanyId, direction, hops, asOf).then((res) => { if (active) setGraph(res); });
     request
-      .catch((reason) => setError(reason instanceof Error ? reason.message : '데이터를 불러오는 중 오류가 발생했습니다.'))
-      .finally(() => setLoading(false));
+      .catch((reason) => {
+        if (active) setError(reason instanceof Error ? reason.message : '데이터를 불러오는 중 오류가 발생했습니다.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
   }, [selectedCompanyId, view, asOf, direction, hops, refreshKey]);
 
-  const selectNewsTicker = useCallback(async (ticker: string) => {
-    let company = companies.find((item) => item.securities.some((security) => security.ticker === ticker));
+  const selectTicker = useCallback(async (ticker: string) => {
+    const cleanTicker = (ticker || '').trim();
+    if (!cleanTicker) {
+      setError('등록된 종목 정보 없음');
+      return;
+    }
+
+    let company = companies.find((item) => item.securities.some((security) => security.ticker === cleanTicker));
 
     if (!company) {
       setLoading(true);
       setError(null);
       try {
-        const result = await getCompanies(ticker);
-        company = result.data.find((item) => item.securities.some((security) => security.ticker === ticker));
+        const result = await getCompanies(cleanTicker);
+        company = result.data.find((item) => item.securities.some((security) => security.ticker === cleanTicker));
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : '종목 정보를 불러오는 중 오류가 발생했습니다.');
         setLoading(false);
@@ -100,7 +118,7 @@ export default function Home() {
     }
 
     if (!company) {
-      setError(`종목코드 ${ticker}에 해당하는 기업을 찾을 수 없습니다.`);
+      setError('등록된 종목 정보 없음');
       setLoading(false);
       return;
     }
@@ -109,6 +127,8 @@ export default function Home() {
     setSelectedCompanyId(company.company_id);
     setView('company');
   }, [companies]);
+
+  const selectNewsTicker = selectTicker;
 
   const filtered = companies;
   const selectedCompany = companies.find((item) => item.company_id === selectedCompanyId);
@@ -173,12 +193,19 @@ export default function Home() {
             )}
           </div>
 
+          {view === 'events' && error && (
+            <div className="error-banner mb-3 p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded flex items-center justify-between" role="alert">
+              <span>{error}</span>
+              <button type="button" onClick={() => setError(null)} className="text-rose-500 hover:text-rose-800 font-bold ml-2">×</button>
+            </div>
+          )}
+
           {view !== 'events' && loading ? <LoadingState />
             : view !== 'events' && error ? <ErrorState message={error} retry={() => setRefreshKey((value) => value + 1)} />
               : view === 'market' && dashboard ? <MarketDashboard data={dashboard} onSelectCompany={(companyId) => { setSelectedCompanyId(companyId); setView('company'); }} />
-                : view === 'events' ? <EventFirstDashboard asOf={asOf} onOpenChain={(companyId) => { setSelectedCompanyId(companyId); setView('chain'); }} />
+                : view === 'events' ? <EventFirstDashboard asOf={asOf} onOpenChain={(companyId) => { setSelectedCompanyId(companyId); setView('chain'); }} onSelectTicker={selectTicker} />
                 : view === 'news' ? <NewsImpact candidates={newsCandidates} status={newsImpactStatus} onSelectTicker={selectNewsTicker} />
-                : view === 'company' && detail ? <CompanyDetail data={detail} />
+                : view === 'company' && detail ? <CompanyDetail key={detail.company.id} data={detail} />
                   : view === 'chain' && graph ? <ChainMap data={graph} selectedEdge={selectedEdge} onSelectEdge={setSelectedEdge} />
                     : <ErrorState message="표시할 데이터가 없습니다." retry={() => setRefreshKey((value) => value + 1)} />}
         </section>

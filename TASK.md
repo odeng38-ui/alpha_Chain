@@ -1,5 +1,35 @@
 # Current Task
 
+## AC-KIS-P3.3: Phase 3.3 이벤트·종목 분석 통합
+
+- 작업 내용:
+  1. 이벤트 분석 후보 카드(`CandidateCard`)에 '종목 상세 분석'(`ef-detail-btn`) 버튼 추가.
+  2. 클릭 시 후보 종목코드(`candidate.ticker`)를 전달받아 종목 분석 화면으로 이동하는 `selectTicker` 구현.
+  3. 기존 `page.tsx`의 기업 조회/선택 로직을 단일화하고 `NewsImpact`의 `selectNewsTicker` 호환성 유지.
+  4. 미등록 종목코드이거나 빈 종목코드일 경우 '등록된 종목 정보 없음' 에러를 표출하고 엉뚱한 기업 선택 또는 잘못된 화면 전환 방지.
+  5. 종목 분석 화면(`CompanyDetail`) 이동 시 KIS 차트 자동 실행 방지 (기본 닫힘 `isChartOpen: false`, 0회 호출 보장) 및 기업 변경 시 차트 닫힘 리셋.
+  6. 빠른 연속 전환 시 레이스 컨디션 및 이전 종목 잔존 데이터 누수 방지 (`active` 취소 플래그, 전환 즉시 `setDetail(null)`, `key={detail.company.id}` remount).
+  7. 기존 이벤트 분석의 체인맵 이동(`onOpenChain`) 및 KIS 차트 토글(`ef-chart-btn`) 버튼 100% 보존.
+  8. 이벤트 분석 화면 내 `error-banner`를 배치하여 미등록 종목 경고를 사용자에게 명확히 전달.
+- 검증 결과:
+  - `node tests/test-phase3-3-event-stock-nav.cjs`: 6개 테스트 케이스 100% 통과.
+  - `node tests/test-phase3-1-stock-analysis-kis.cjs`: 100% 통과.
+  - `node tests/test-phase3-2-viewer-auth.cjs`: 100% 통과.
+  - `node tests/core-dashboard-01-render.cjs`: 100% 통과.
+  - `node tests/test-chart-panel-render.cjs`: 100% 통과.
+  - `node tests/test-moving-average.cjs`: 100% 통과.
+  - `npx tsc --noEmit`: 0 errors 무오류 통과.
+- 운영 환경 상태:
+  - DB 쓰기 및 마이그레이션 실행 없음.
+  - Neon 브랜치 생성·삭제 없음.
+  - Worker·Cron 실행 없음.
+  - 실제 외부 KIS API 호출 없음.
+  - GitHub Push·PR 생성, main 병합, Vercel 배포 없음.
+- 다음 한 가지 작업:
+  - 사용자 승인 후 Phase 3.3 커밋 및 후속 검토.
+
+---
+
 - CORE-INTEGRATION-02: main 146e066 기반 격리 작업 트리의 기존 Event-First 읽기 API·화면 선별 통합.
 - 결과: GET 목록/분석 → 저장 ID 브리지 → 기존 EventFirstQueryService/B4/B3 → 저장 가격·점수 → EventFirstDashboard 연결. 기존 ChainMap 진입 연결 유지.
 - 검증: 새 HTTP 경계 테스트 6 passed, SSR 3상태 passed, TypeScript noEmit 통과. 브라우저 상호작용·운영 DB 연결은 검증하지 않음.

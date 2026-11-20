@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BarChart3, ExternalLink, FileText, Gauge, Landmark, TrendingUp } from 'lucide-react';
 import type { CompanyDetailData } from '@/lib/types';
 import { EmptyState, Freshness } from './ui-state';
@@ -25,6 +25,11 @@ export function CompanyDetail({
   const [isChartOpen, setIsChartOpen] = useState(initialChartOpen);
   const score = data.score;
   const hasSecurity = Boolean(data.security?.ticker);
+
+  // Guarantee KIS chart is always closed by default when switching companies
+  useEffect(() => {
+    setIsChartOpen(false);
+  }, [data.company.id]);
 
   return (
     <div className="view-stack">

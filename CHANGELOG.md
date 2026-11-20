@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-20
+- AC-KIS-P3.3: Phase 3.3 이벤트·종목 분석 통합 (이벤트 분석 후보 종목 카드에 '종목 상세 분석' [ef-detail-btn] 버튼 추가, 종목코드로 기존 기업 매핑 및 CompanyDetail 화면 이동 연결, page.tsx selectTicker 로직 공유 및 NewsImpact 호환 유지, 미등록/결측 종목코드에 대한 '등록된 종목 정보 없음' 에러 처리 및 오선택 차단, 화면 이동 시 KIS 차트 자동 실행 방지 [0회 호출], 빠른 종목 전환 시 stale data 및 레이스 컨디션 방지 [active cleanup, setDetail(null), key remount], 기존 체인맵 [onOpenChain] 및 KIS 차트 토글 [ef-chart-btn] 보존, 단위 테스트 통과).
 - AC-KIS-P3.2: Phase 3.2 사용자 조회 권한 분리 (VIEWER와 ADMIN 역할 분리, Viewer 전용 scrypt 비밀번호 해시 및 서명 키 분리, 7일 유효 HttpOnly·SameSite=Lax 쿠키 발급, KIS 현재가/과거 캔들 GET 전용 권한 부여, 백엔드 관리자 프록시 및 데이터 변경 요청 차단, StockChartPanel 일반 조회 및 관리자 탭 분리, 로그아웃 시 실측 캐시 즉시 소거, Preview 전용 활성화 게이팅, 단위/통합 테스트 통과).
 
 ## 2026-11-18

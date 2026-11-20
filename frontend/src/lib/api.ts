@@ -1,4 +1,4 @@
-import type { CompanyDetailData, CompanySummary, DashboardData, EventFirstAnalysis, GlobalEventSummary, GraphData, NewsImpactData, NewsImpactStatus } from './types';
+import type { CompanyDetailData, CompanySearchResponse, CompanySummary, DashboardData, EventFirstAnalysis, GlobalEventSummary, GraphData, NewsImpactData, NewsImpactStatus } from './types';
 import type { CandlePeriod, KisCurrentQuoteData, KisHistoricalQuotesData } from './kis-types';
 import { getMockHistorical, getMockQuote } from './kis-mock-data';
 import { clearRealKisCache } from './kis-cache';
@@ -13,7 +13,39 @@ async function api<T>(path: string): Promise<T> {
 }
 
 export const getDashboard = (asOf: string) => api<DashboardData>(`ui/dashboard?as_of=${asOf}`);
-export const getCompanies = (query = '') => api<{ count: number; data: CompanySummary[] }>(`master/companies?limit=80&query=${encodeURIComponent(query)}`);
+export type CompanyQueryOptions = {
+  query?: string;
+  market?: string;
+  status?: string;
+  sortBy?: 'name' | 'ticker';
+  sort_by?: 'name' | 'ticker';
+  sortOrder?: 'asc' | 'desc';
+  sort_order?: 'asc' | 'desc';
+  page?: number;
+  pageSize?: number;
+  page_size?: number;
+  limit?: number;
+};
+
+export const getCompanies = (options: CompanyQueryOptions | string = '') => {
+  if (typeof options === 'string') {
+    const q = options.trim();
+    return api<CompanySearchResponse>(`master/companies?page_size=50&query=${encodeURIComponent(q)}`);
+  }
+  const params = new URLSearchParams();
+  if (options.query && options.query.trim()) params.set('query', options.query.trim());
+  if (options.market && options.market !== 'ALL') params.set('market', options.market);
+  if (options.status && options.status !== 'ALL') params.set('status', options.status);
+  const sortByVal = options.sortBy || options.sort_by;
+  if (sortByVal) params.set('sort_by', sortByVal);
+  const sortOrderVal = options.sortOrder || options.sort_order;
+  if (sortOrderVal) params.set('sort_order', sortOrderVal);
+  if (options.page) params.set('page', String(options.page));
+  const pageSizeVal = options.pageSize || options.page_size;
+  if (pageSizeVal) params.set('page_size', String(pageSizeVal));
+  if (options.limit) params.set('limit', String(options.limit));
+  return api<CompanySearchResponse>(`master/companies?${params.toString()}`);
+};
 export const getCompanyDetail = (companyId: number, asOf: string) => api<CompanyDetailData>(`ui/companies/${companyId}?as_of=${asOf}`);
 export const getGraph = (companyId: number, direction: string, hops: number, asOf: string) => api<GraphData>(`companies/${companyId}/graph?direction=${direction}&hops=${hops}&as_of=${asOf}&limit=50`);
 export const getNewsImpacts = (limit = 300) => api<NewsImpactData>(`news/stock-candidates?limit=${limit}`);

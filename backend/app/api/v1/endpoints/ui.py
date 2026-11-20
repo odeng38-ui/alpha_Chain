@@ -2,8 +2,13 @@ from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
+from app.adapters.krx_listing_provider import KrxListingProvider
+from app.api.v1.endpoints.master import (
+    classify_security_listing_status,
+    sort_securities_for_company,
+)
 from app.db.session import get_db
 from app.models.schema import (
     Company,
@@ -74,14 +79,15 @@ def operations_health(db: Session = Depends(get_db)):
 @router.get("/companies/{company_id}")
 def company_detail(company_id: int, as_of: date = Query(default_factory=date.today),
                    db: Session = Depends(get_db)):
-    company = db.get(Company, company_id)
+    company = db.query(Company).options(
+        load_only(Company.id, Company.corp_code, Company.name, Company.status, Company.industry_id)
+    ).filter(Company.id == company_id).first()
     if company is None:
         raise HTTPException(status_code=404, detail="company not found")
     cutoff = datetime.combine(as_of, time.max)
-    security = db.query(Security).filter(
-        Security.company_id == company_id,
-        Security.security_type == "COMMON",
-    ).order_by(Security.effective_to.is_(None).desc(), Security.id).first()
+    all_securities = db.query(Security).filter(Security.company_id == company_id).all()
+    sorted_secs = sort_securities_for_company(all_securities, company_name=company.name)
+    security = sorted_secs[0] if sorted_secs else None
     prices = []
     score = None
     if security:
@@ -104,8 +110,15 @@ def company_detail(company_id: int, as_of: date = Query(default_factory=date.tod
         "as_of": as_of, "generated_at": datetime.utcnow(),
         "company": {"id": company.id, "name": company.name, "status": company.status,
                     "industry_id": company.industry_id, "corp_code": company.corp_code},
-        "security": {"id": security.id, "ticker": security.ticker, "market": security.market}
-                    if security else None,
+        "security": {
+            "id": security.id,
+            "ticker": security.ticker,
+            "market": security.market,
+            "listing_status": classify_security_listing_status(security, company_name=company.name),
+            "listing_source": KrxListingProvider.get_instance().source_name if KrxListingProvider.get_instance().is_available else "NONE",
+            "listing_as_of": KrxListingProvider.get_instance().as_of_date if KrxListingProvider.get_instance().is_available else None,
+            "delisted_at": security.delisted_at.isoformat() if security.delisted_at else None,
+        } if security else None,
         "prices": [{"date": row.trade_date, "close": float(row.adjusted_close or row.close)
                     if (row.adjusted_close is not None or row.close is not None) else None,
                     "volume": row.volume} for row in prices],

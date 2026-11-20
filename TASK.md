@@ -1,5 +1,107 @@
 # Current Task
 
+## AC-KIS-P3.3B-TRK-A: Phase 3.3-B Track A 안전한 상장상태 판정 개선
+
+- 작업 내용:
+  1. KRX KIND 공식 상장 데이터 확보 및 검증:
+     - 한국거래소 공식 KIND 현재 상장법인(2,769개) 및 상장폐지법인(1,885개) 데이터셋 확보 및 기준일(2026-11-20) 검증.
+     - 정규화된 읽기 전용 참조 파일 (`backend/app/data/krx_listing_reference.json`) 생성 및 출처·기준일 명시.
+  2. KrxListingProvider 어댑터 구현 (`backend/app/adapters/krx_listing_provider.py`):
+     - 인메모리 싱글톤 캐시(0ms 초고속 조회) 및 최신성 검사 로직 구현.
+     - 4단계 판정 규칙: 1순위 공식 현재 상장(LISTED) -> 2순위 공식 상장폐지/DB 폐지일(DELISTED) -> 3순위 비상장(UNLISTED) -> 4순위 미확인(UNKNOWN).
+     - 종목코드 재사용/이름 충돌 방어(DB 기업명과 공식 기업명 대조) 및 캐시 부재 시 안전한 UNKNOWN 폴백.
+     - 기존 DB의 market/effective_to만으로 LISTED를 확정하지 않도록 차단.
+  3. 백엔드 및 프론트엔드 연계:
+     - `master.py` 및 `ui.py`: `classify_security_listing_status`에 `KrxListingProvider` 연계, API 응답에 `listing_source`, `listing_as_of` 메타데이터 노출.
+     - `types.ts`: `listing_source`, `listing_as_of` 인터페이스 확장.
+  4. 최소 7개 대상 종목 및 단위/통합 검증:
+     - 삼성전자(005930), 한미반도체(042700), 가비아(079940), 금강철강(053260), 원익피앤이(217820), 덕양에너젠(0001A0) -> LISTED 정상 확정.
+     - 원익피앤이 과거(131390), 엔에스아이(053250) -> DELISTED 정상 확정.
+     - `test_krx_listing_provider.py` (4건), `test_kis_quote_phase1.py` (9건), `test-phase3-3a-listing-master.cjs` (10건) 100% 통과.
+- 운영 환경 상태:
+  - DB 쓰기/마이그레이션 0건 (Zero-DB-Write 원칙 준수)
+  - Neon 브랜치 조작 없음
+  - Worker/Cron 실행 없음
+  - KIS 외부 API 호출 0건
+  - main 병합 및 Production 배포 없음
+  5. Ruff I001 수정 및 상장폐지일 분리 관리:
+     - `test_krx_listing_provider.py` Ruff I001 import 정렬 오류 수정 완료.
+     - `krx_listing_reference.json` 상장폐지일 누락 원인: 공식 KIND `searchType=14` 원본에 상장일 컬럼만 존재하고 폐지일 컬럼 부재 확인.
+     - 무결성 원칙 준수: 임의의 폐지일 생성 금지, `delisted_at: None`, `delisted_at_verified: False`로 상태와 일자 확인 분리 관리.
+     - DB에 검증된 `db_delisted_at`이 제공될 때만 폐지일 매핑 및 `delisted_at_verified=True` 처리.
+- 다음 한 가지 작업:
+  - 수정사항 PR #18 브랜치에 커밋 및 Push, GitHub CI 및 Preview 상태 확인.
+
+---
+
+## AC-KIS-P3.3B: Phase 3.3-B KRX 공식 마스터 정기 동기화 배치 설계 및 수집률 진단
+
+- 작업 내용:
+  1. Phase 3.3-A 마무리 (한미반도체 고정 표시 원인 해결 및 가나다순 정렬 버그 수정):
+     - 원인: 상단 네비게이션 '종목 분석' 클릭 시 selectedCompanyId 미갱신으로 이전 선택(한미반도체)이 유지되던 현상 및 검색/필터 변경 시 선택 동기화 부재.
+     - 수정: handleNavClick 추가 (목록 첫 번째 항목 자동 선택), 이벤트 분석 진입 시 selectTicker 보존, 검색/필터 변경 시 새 결과 첫 번째 항목으로 동기화.
+     - 백엔드: 한글 가나다순 (^[가-힣]) -> 영문 (^[A-Za-z]) -> 기타 순 전체 DB 정렬 및 ICU Collation 안전 폴백.
+     - 커밋 3be24f4, 3696c37을 원격 브랜치 feat/ac-listing-master-quality (PR #18)에 푸시 완료.
+  2. Phase 3.3-B 읽기 전용 수집률 진단 (DB 실측):
+     - 전체 기업: 2,810개 (ACTIVE 2,644개, 기타 166개)
+     - 전체 증권: 2,811개 (KOSPI 880개, KOSDAQ 1,931개, KONEX 0개)
+     - 상장 상태 분류: LISTED(활성) 2,569개, DELISTED(상폐) 166개, UNKNOWN(미확인) 76개
+     - KRX 공식 유니버스 대비 현황:
+       - KOSPI 보통주: 829개 수집 (공식 약 835개 대비 ~99.3%)
+       - KOSDAQ 보통주/스팩: 1,740개 수집 (공식 약 1,720개 대비 ~101.1%)
+       - KONEX 시장: 0개 수집 (공식 약 125개 대비 0% — 전건 누락)
+       - KOSPI 우선주/ETF: 보통주 중심 수집으로 우선주 대다수 누락
+     - 가격 데이터 보유 현황:
+       - 일별 가격 레코드: 3,010,996건 (2021-09-24 ~ 2026-11-04)
+       - 가격 데이터 보유 증권: 2,738개 (활성 증권 2,569개 전원 보유율 100%)
+       - 가격 신선도: 2026-10-14까지 전 종목 최신화, 2026-11-04는 5종목만 부분 수집
+- 운영 환경 상태:
+  - DB 쓰기/마이그레이션 0건 (SELECT 진단만 수행)
+  - Neon 브랜치 조작 없음
+  - Worker/Cron 실행 없음
+  - KIS 외부 API 호출 0건
+  - main 병합 및 Production 배포 없음
+- 다음 한 가지 작업:
+  - 사용자 승인 후 Phase 3.3-B KRX 공식 마스터 정기 동기화 배치 설계 및 KONEX/우선주 보완 계획 수립.
+
+---
+
+## AC-KIS-P3.3A: Phase 3.3-A 기업 마스터·상장상태·종목 탐색 통합 정비
+
+- 작업 내용:
+  1. `master.py` 기업 검색 API (`GET /api/v1/master/companies`) 전면 정비:
+     - 전체 DB 기반 동적 검색, 정렬 (`name` 기업명순 기본, `ticker` 종목코드순), `Company.id ASC` 안정적 타이 브레이커.
+     - 시장 필터 (`market`: ALL, KOSPI, KOSDAQ, KONEX), 상장 상태 필터 (`status`: ALL, LISTED, DELISTED, UNLISTED, UNKNOWN).
+     - 기본 목록: `LISTED` 우선 정렬.
+     - 페이지네이션 응답 규격 (`total_count`, `page`, `page_size`, `total_pages`, `has_more`) 및 기존 `count`, `data` 하위 호환성 유지.
+     - 미마이그레이션 DB 컬럼 충돌 방지를 위한 `load_only` 안전 쿼리 적용.
+  2. 증권 단위 상장 상태 판정 및 대표 증권 선별 로직:
+     - `classify_security_listing_status`: `listed_at`, `delisted_at`, `effective_to` 기반으로 `LISTED`, `DELISTED`, `UNLISTED`, `UNKNOWN` 정밀 판정 (상장일 결측만으로 상폐 처리하지 않고 `UNKNOWN` 유지).
+     - `sort_securities_for_company`: 활성 상장 보통주 우선, 기타 상장 증권, 미확인, 상장폐지 순 정렬.
+     - 복수 증권 기업 (예: 원익피앤이)에서 활성 종목(`217820`, LISTED)을 대표 증권으로 지정하고 과거 상폐 종목(`131390`, DELISTED)을 보조 증권으로 안전 분리.
+  3. KIS 종목코드 규격 확장 (6자리 영숫자):
+     - KIS 시세 어댑터(`kis_quote_adapter.py`), 시세 서비스(`kis_quote_service.py`), 프론트엔드 라우트 핸들러(`route.ts`)의 종목코드 검증 정규식을 `^[0-9A-Za-z]{6}$` (대문자 정규화)로 확장.
+     - 덕양에너젠(`0001A0`), 스팩 등 57개 영문 포함 종목에 대한 KIS 400 Bad Request 에러 방지.
+  4. 프론트엔드 종목 탐색기 및 상세 화면 통합:
+     - `page.tsx`: 좌측 종목 레일에 시장 필터 pills, 상장 상태 필터 pills, 가나다순/코드순 토글, "더 보기" 버튼 기반 페이지네이션, 상장폐지/미확인 배지 표시 추가.
+     - `company-detail.tsx`: 상장폐지(`DELISTED`) 종목에 대해 KIS 실시간 차트 버튼을 비활성화하고 "상장폐지 · 시세 미제공" 배지 표시, 미확인(`UNKNOWN`) 종목에 "상장 미확인" 배지 표시, 상장(`LISTED`) 종목에 기존 차트 버튼 활성화.
+     - `ui.py`: `GET /api/v1/ui/companies/{company_id}`에서도 `sort_securities_for_company`와 `classify_security_listing_status`를 적용하여 일관된 대표 증권 및 상장 상태 반환.
+- 검증 결과:
+  - `node tests/test-phase3-3a-listing-master.cjs`: 8개 전 시나리오 100% 통과 (원익피앤이 대표 증권, 덕양에너젠 영숫자, 미확인 처리, 6자리 정규식, 컴포넌트 4종 렌더링).
+  - `python -m pytest tests/test_kis_quote_phase1.py`: 9개 테스트 100% 통과.
+  - `npx tsc --noEmit`: 0 error 무오류 통과.
+  - `node tests/test-phase3-3-event-stock-nav.cjs` & `node tests/test-phase3-1-stock-analysis-kis.cjs`: 기존 기능 회귀 0건 통과.
+- 운영 환경 상태:
+  - DB 쓰기 및 마이그레이션 실행 없음.
+  - Neon 브랜치 조작 없음.
+  - Worker·Cron 실행 없음.
+  - 실제 외부 KIS API 호출 없음.
+  - 원격 Push, PR 생성, main 병합, Vercel Production 배포 없음.
+- 다음 한 가지 작업:
+  - 로컬 커밋 생성 및 사용자에게 Phase 3.3-A 로컬 구현 결과 보고.
+
+---
+
 ## AC-KIS-P3.3: Phase 3.3 이벤트·종목 분석 통합
 
 - 작업 내용:

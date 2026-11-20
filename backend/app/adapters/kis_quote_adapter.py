@@ -300,9 +300,9 @@ class KisQuoteAdapter:
 
     def get_current_quote(self, ticker: str) -> KisCurrentQuote:
         """Fetch current snapshot quote for a Korean stock."""
-        ticker = ticker.strip()
-        if not re.match(r"^\d{6}$", ticker):
-            raise ValueError(f"Ticker must be a 6-digit numeric code, got: {ticker}")
+        ticker = ticker.strip().upper()
+        if not re.match(r"^[0-9A-Za-z]{6}$", ticker):
+            raise ValueError(f"Ticker must be a 6-character code, got: {ticker}")
 
         data = self._execute_request_with_retry(
             endpoint="/uapi/domestic-stock/v1/quotations/inquire-price",
@@ -369,9 +369,9 @@ class KisQuoteAdapter:
         adjust: bool = True,
     ) -> KisHistoricalQuotes:
         """Fetch historical OHLCV candles (Day, Week, Month) for a Korean stock."""
-        ticker = ticker.strip()
-        if not re.match(r"^\d{6}$", ticker):
-            raise ValueError(f"Ticker must be a 6-digit numeric code, got: {ticker}")
+        ticker = ticker.strip().upper()
+        if not re.match(r"^[0-9A-Za-z]{6}$", ticker):
+            raise ValueError(f"Ticker must be a 6-character code, got: {ticker}")
 
         period = period.upper().strip()
         if period not in ("D", "W", "M"):

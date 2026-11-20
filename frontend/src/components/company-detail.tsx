@@ -25,6 +25,8 @@ export function CompanyDetail({
   const [isChartOpen, setIsChartOpen] = useState(initialChartOpen);
   const score = data.score;
   const hasSecurity = Boolean(data.security?.ticker);
+  const isDelisted = Boolean(data.security?.delisted_at) || data.security?.listing_status === 'DELISTED';
+  const isUnknown = data.security?.listing_status === 'UNKNOWN';
 
   // Guarantee KIS chart is always closed by default when switching companies
   useEffect(() => {
@@ -38,27 +40,51 @@ export function CompanyDetail({
           <span className="kicker">COMPANY INTELLIGENCE</span>
           <h2>{data.company.name}</h2>
           <p>
-            {data.security ? `${data.security.market} · ${data.security.ticker}` : '연결된 보통주 없음'} · {data.company.industry_id ?? '산업 미분류'}
+            {data.security
+              ? `${data.security.market} · ${data.security.ticker}${
+                  data.security.listing_status && data.security.listing_status !== 'LISTED'
+                    ? ` (${data.security.listing_status})`
+                    : ''
+                }`
+              : '연결된 보통주 없음'}{' '}
+            · {data.company.industry_id ?? '산업 미분류'}
           </p>
         </div>
         <div className="company-meta">
           {hasSecurity ? (
-            <button
-              type="button"
-              className={`px-3 py-1.5 rounded text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm ${
-                isChartOpen
-                  ? 'bg-emerald-700 text-white hover:bg-emerald-800'
-                  : 'bg-emerald-600 text-white hover:bg-emerald-500'
-              }`}
-              onClick={() => setIsChartOpen((prev) => !prev)}
-              aria-label={isChartOpen ? 'KIS 캔들차트 닫기' : 'KIS 온디맨드 캔들차트 열기'}
-            >
-              <BarChart3 size={14} />
-              {isChartOpen ? 'KIS 차트 닫기' : 'KIS 실시간 캔들차트'}
-            </button>
+            isDelisted ? (
+              <span
+                className="text-xs px-2.5 py-1 rounded font-medium bg-rose-50 text-rose-700 border border-rose-200"
+                title="상장폐지 종목으로 KIS 실시간 시세를 제공하지 않습니다."
+              >
+                상장폐지 · 시세 미제공
+              </span>
+            ) : (
+              <button
+                type="button"
+                className={`px-3 py-1.5 rounded text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm ${
+                  isChartOpen
+                    ? 'bg-emerald-700 text-white hover:bg-emerald-800'
+                    : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                }`}
+                onClick={() => setIsChartOpen((prev) => !prev)}
+                aria-label={isChartOpen ? 'KIS 캔들차트 닫기' : 'KIS 온디맨드 캔들차트 열기'}
+              >
+                <BarChart3 size={14} />
+                {isChartOpen ? 'KIS 차트 닫기' : 'KIS 실시간 캔들차트'}
+              </button>
+            )
           ) : (
             <span className="text-xs px-2.5 py-1 rounded font-medium bg-slate-100 text-slate-500 border border-slate-200">
               비상장 · 시세 불가
+            </span>
+          )}
+          {isUnknown && (
+            <span
+              className="text-xs px-2 py-0.5 rounded font-medium bg-amber-50 text-amber-700 border border-amber-200"
+              title="상장 상태 미확인 종목"
+            >
+              상장 미확인
             </span>
           )}
           <span className={`status-dot ${data.company.status.toLowerCase()}`}>{data.company.status}</span>

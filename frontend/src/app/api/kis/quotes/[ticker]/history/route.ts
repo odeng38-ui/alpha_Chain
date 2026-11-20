@@ -21,12 +21,13 @@ export async function GET(
   request: NextRequest,
   context: { params: Promise<{ ticker: string }> }
 ) {
-  const { ticker } = await context.params;
+  const rawParams = await context.params;
+  const ticker = (rawParams.ticker || '').trim().toUpperCase();
 
-  // 1. Validate 6-digit numeric ticker
-  if (!ticker || !/^\d{6}$/.test(ticker)) {
+  // 1. Validate 6-character alphanumeric ticker (KRX standard)
+  if (!ticker || !/^[0-9A-Za-z]{6}$/.test(ticker)) {
     return NextResponse.json(
-      { detail: '유효한 6자리 종목코드를 입력하세요 (예: 042700).' },
+      { detail: '유효한 6자리 종목코드를 입력하세요 (예: 005930, 0001A0).' },
       { status: 400 }
     );
   }

@@ -207,10 +207,14 @@ def test_3_validation_boundaries():
     service = KisQuoteService()
 
     # Invalid tickers
-    with pytest.raises(ValueError, match="6-digit numeric"):
+    with pytest.raises(ValueError, match="6-character"):
         service.get_current_quote("04270")
-    with pytest.raises(ValueError, match="6-digit numeric"):
+    with pytest.raises(ValueError, match="6-character"):
         service.get_current_quote("HANMI")
+
+    # Valid alphanumeric ticker normalization (Phase 3.3-A)
+    assert service._validate_ticker("0001a0") == "0001A0"
+    assert service._validate_ticker("0099X0") == "0099X0" 
 
     # Invalid period
     with pytest.raises(ValueError, match="Invalid period"):

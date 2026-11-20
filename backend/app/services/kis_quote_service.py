@@ -35,9 +35,9 @@ class KisQuoteService:
         self._cache_lock = threading.Lock()
 
     def _validate_ticker(self, ticker: str) -> str:
-        cleaned = (ticker or "").strip()
-        if not re.match(r"^\d{6}$", cleaned):
-            raise ValueError(f"Ticker must be a 6-digit numeric code, got: '{ticker}'")
+        cleaned = (ticker or "").strip().upper()
+        if not re.match(r"^[0-9A-Za-z]{6}$", cleaned):
+            raise ValueError(f"Ticker must be a 6-character code, got: '{ticker}'")
         return cleaned
 
     def get_current_quote(self, ticker: str, bypass_cache: bool = False) -> KisCurrentQuote:

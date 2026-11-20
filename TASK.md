@@ -1,5 +1,41 @@
 # Current Task
 
+## AC-KIS-P3.3A: Phase 3.3-A 기업 마스터·상장상태·종목 탐색 통합 정비
+
+- 작업 내용:
+  1. `master.py` 기업 검색 API (`GET /api/v1/master/companies`) 전면 정비:
+     - 전체 DB 기반 동적 검색, 정렬 (`name` 기업명순 기본, `ticker` 종목코드순), `Company.id ASC` 안정적 타이 브레이커.
+     - 시장 필터 (`market`: ALL, KOSPI, KOSDAQ, KONEX), 상장 상태 필터 (`status`: ALL, LISTED, DELISTED, UNLISTED, UNKNOWN).
+     - 기본 목록: `LISTED` 우선 정렬.
+     - 페이지네이션 응답 규격 (`total_count`, `page`, `page_size`, `total_pages`, `has_more`) 및 기존 `count`, `data` 하위 호환성 유지.
+     - 미마이그레이션 DB 컬럼 충돌 방지를 위한 `load_only` 안전 쿼리 적용.
+  2. 증권 단위 상장 상태 판정 및 대표 증권 선별 로직:
+     - `classify_security_listing_status`: `listed_at`, `delisted_at`, `effective_to` 기반으로 `LISTED`, `DELISTED`, `UNLISTED`, `UNKNOWN` 정밀 판정 (상장일 결측만으로 상폐 처리하지 않고 `UNKNOWN` 유지).
+     - `sort_securities_for_company`: 활성 상장 보통주 우선, 기타 상장 증권, 미확인, 상장폐지 순 정렬.
+     - 복수 증권 기업 (예: 원익피앤이)에서 활성 종목(`217820`, LISTED)을 대표 증권으로 지정하고 과거 상폐 종목(`131390`, DELISTED)을 보조 증권으로 안전 분리.
+  3. KIS 종목코드 규격 확장 (6자리 영숫자):
+     - KIS 시세 어댑터(`kis_quote_adapter.py`), 시세 서비스(`kis_quote_service.py`), 프론트엔드 라우트 핸들러(`route.ts`)의 종목코드 검증 정규식을 `^[0-9A-Za-z]{6}$` (대문자 정규화)로 확장.
+     - 덕양에너젠(`0001A0`), 스팩 등 57개 영문 포함 종목에 대한 KIS 400 Bad Request 에러 방지.
+  4. 프론트엔드 종목 탐색기 및 상세 화면 통합:
+     - `page.tsx`: 좌측 종목 레일에 시장 필터 pills, 상장 상태 필터 pills, 가나다순/코드순 토글, "더 보기" 버튼 기반 페이지네이션, 상장폐지/미확인 배지 표시 추가.
+     - `company-detail.tsx`: 상장폐지(`DELISTED`) 종목에 대해 KIS 실시간 차트 버튼을 비활성화하고 "상장폐지 · 시세 미제공" 배지 표시, 미확인(`UNKNOWN`) 종목에 "상장 미확인" 배지 표시, 상장(`LISTED`) 종목에 기존 차트 버튼 활성화.
+     - `ui.py`: `GET /api/v1/ui/companies/{company_id}`에서도 `sort_securities_for_company`와 `classify_security_listing_status`를 적용하여 일관된 대표 증권 및 상장 상태 반환.
+- 검증 결과:
+  - `node tests/test-phase3-3a-listing-master.cjs`: 8개 전 시나리오 100% 통과 (원익피앤이 대표 증권, 덕양에너젠 영숫자, 미확인 처리, 6자리 정규식, 컴포넌트 4종 렌더링).
+  - `python -m pytest tests/test_kis_quote_phase1.py`: 9개 테스트 100% 통과.
+  - `npx tsc --noEmit`: 0 error 무오류 통과.
+  - `node tests/test-phase3-3-event-stock-nav.cjs` & `node tests/test-phase3-1-stock-analysis-kis.cjs`: 기존 기능 회귀 0건 통과.
+- 운영 환경 상태:
+  - DB 쓰기 및 마이그레이션 실행 없음.
+  - Neon 브랜치 조작 없음.
+  - Worker·Cron 실행 없음.
+  - 실제 외부 KIS API 호출 없음.
+  - 원격 Push, PR 생성, main 병합, Vercel Production 배포 없음.
+- 다음 한 가지 작업:
+  - 로컬 커밋 생성 및 사용자에게 Phase 3.3-A 로컬 구현 결과 보고.
+
+---
+
 ## AC-KIS-P3.3: Phase 3.3 이벤트·종목 분석 통합
 
 - 작업 내용:

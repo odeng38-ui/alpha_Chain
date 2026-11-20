@@ -97,6 +97,11 @@ export default function Home() {
           setPage(1);
           setHasMore(result.has_more);
           setTotalCount(result.total_count);
+          setSelectedCompanyId((current) => {
+            if (!current) return result.data[0]?.company_id ?? null;
+            const exists = result.data.some((c) => c.company_id === current);
+            return exists ? current : (result.data[0]?.company_id ?? null);
+          });
         })
         .catch((reason) => {
           if (!active) return;
@@ -201,6 +206,16 @@ export default function Home() {
 
   const selectNewsTicker = selectTicker;
 
+  const handleNavClick = (targetView: View) => {
+    if (targetView === 'company') {
+      // 사용자가 종목 분석 메뉴를 직접 열면 기본 정렬의 첫 번째 상장기업을 선택
+      if (companies.length > 0) {
+        setSelectedCompanyId(companies[0].company_id);
+      }
+    }
+    setView(targetView);
+  };
+
   const selectedCompany = companies.find((item) => item.company_id === selectedCompanyId);
 
   return (
@@ -212,7 +227,7 @@ export default function Home() {
         </button>
         <nav aria-label="주요 메뉴">
           {navigation.map((item) => (
-            <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => setView(item.id)}>
+            <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => handleNavClick(item.id)}>
               <item.icon size={17} />{item.label}
             </button>
           ))}
@@ -427,6 +442,8 @@ export default function Home() {
             <NewsImpact candidates={newsCandidates} status={newsImpactStatus} onSelectTicker={selectNewsTicker} />
           ) : view === 'company' && detail ? (
             <CompanyDetail key={detail.company.id} data={detail} />
+          ) : view === 'company' && !selectedCompanyId ? (
+            <ErrorState message="선택된 기업이 없습니다. 좌측 목록에서 기업을 선택해주세요." retry={() => setRefreshKey((value) => value + 1)} />
           ) : view === 'chain' && graph ? (
             <ChainMap data={graph} selectedEdge={selectedEdge} onSelectEdge={setSelectedEdge} />
           ) : (

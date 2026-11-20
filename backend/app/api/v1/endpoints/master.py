@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, case, func, not_, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session, load_only
 
 from app.config import settings

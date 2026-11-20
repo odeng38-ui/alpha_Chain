@@ -163,14 +163,9 @@ def search_companies(
 
     # 4. Sorting
     order_expressions = []
-    # If status is ALL, LISTED companies come first!
-    if status.upper() == "ALL":
-        is_active_subq = db.query(Security.id).filter(
-            Security.company_id == Company.id,
-            Security.listed_at.isnot(None),
-            Security.delisted_at.is_(None)
-        ).exists()
-        order_expressions.append(case((is_active_subq, 0), else_=1))
+    # Do not prioritize rows by listed_at: imported Neon records generally lack
+    # listing dates, so this would pin the rare dated security ahead of 가/나 order.
+    # The requested sort_by determines the order across the full result set.
 
     if sort_by.lower() == "ticker":
         sec_ticker_subq = db.query(Security.ticker).filter(

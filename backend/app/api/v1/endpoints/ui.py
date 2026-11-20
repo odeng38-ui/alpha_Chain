@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session, load_only
 
+from app.adapters.krx_listing_provider import KrxListingProvider
 from app.api.v1.endpoints.master import (
     classify_security_listing_status,
     sort_securities_for_company,
@@ -85,7 +86,7 @@ def company_detail(company_id: int, as_of: date = Query(default_factory=date.tod
         raise HTTPException(status_code=404, detail="company not found")
     cutoff = datetime.combine(as_of, time.max)
     all_securities = db.query(Security).filter(Security.company_id == company_id).all()
-    sorted_secs = sort_securities_for_company(all_securities)
+    sorted_secs = sort_securities_for_company(all_securities, company_name=company.name)
     security = sorted_secs[0] if sorted_secs else None
     prices = []
     score = None
@@ -113,7 +114,9 @@ def company_detail(company_id: int, as_of: date = Query(default_factory=date.tod
             "id": security.id,
             "ticker": security.ticker,
             "market": security.market,
-            "listing_status": classify_security_listing_status(security),
+            "listing_status": classify_security_listing_status(security, company_name=company.name),
+            "listing_source": KrxListingProvider.get_instance().source_name if KrxListingProvider.get_instance().is_available else "NONE",
+            "listing_as_of": KrxListingProvider.get_instance().as_of_date if KrxListingProvider.get_instance().is_available else None,
             "delisted_at": security.delisted_at.isoformat() if security.delisted_at else None,
         } if security else None,
         "prices": [{"date": row.trade_date, "close": float(row.adjusted_close or row.close)

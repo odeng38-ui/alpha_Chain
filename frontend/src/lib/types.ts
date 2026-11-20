@@ -16,6 +16,8 @@ export type CompanySummary = {
   name: string;
   status: string;
   listing_status?: ListingStatus;
+  listing_source?: string;
+  listing_as_of?: string | null;
   corp_code?: string | null;
   industry_id: string | null;
   securities: {
@@ -25,6 +27,8 @@ export type CompanySummary = {
     isin?: string | null;
     security_type?: string;
     listing_status?: ListingStatus;
+    listing_source?: string;
+    listing_as_of?: string | null;
     is_primary?: boolean;
     listed_at?: string | null;
     delisted_at?: string | null;
@@ -38,6 +42,8 @@ export type CompanySearchResponse = {
   page_size: number;
   total_pages: number;
   has_more: boolean;
+  listing_source?: string;
+  listing_as_of?: string | null;
   data: CompanySummary[];
 };
 
@@ -45,7 +51,15 @@ export type CompanyDetailData = {
   as_of: string;
   generated_at: string;
   company: { id: number; name: string; status: string; industry_id: string | null; corp_code: string | null };
-  security: { id: number; ticker: string; market: string; listing_status?: ListingStatus; delisted_at?: string | null } | null;
+  security: {
+    id: number;
+    ticker: string;
+    market: string;
+    listing_status?: ListingStatus;
+    listing_source?: string;
+    listing_as_of?: string | null;
+    delisted_at?: string | null;
+  } | null;
   prices: { date: string; close: number | null; volume: number | null }[];
   score: { as_of_date: string; total: number; confidence: number; components: Record<string, number | null>; explanations: { positive_factors?: Factor[]; risk_factors?: Factor[]; missing_components?: { component: string; reason: string }[] } } | null;
   financials: { account_name: string; value: number | null; unit: string; period: string; filed_at: string }[];

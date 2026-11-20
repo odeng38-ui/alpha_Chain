@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, collate, func, or_, text
 from sqlalchemy.orm import Session, load_only
 
+from app.adapters.krx_listing_provider import KrxListingProvider
 from app.config import settings
 from app.db.session import get_db
 from app.models.schema import Company, IdentifierMap, Security
@@ -49,21 +50,26 @@ def get_korean_collation(db: Session) -> Optional[str]:
     return _korean_collation_cache or None
 
 
-def classify_security_listing_status(s: Security) -> str:
+def classify_security_listing_status(s: Security, company_name: Optional[str] = None) -> str:
+    # 1. Official KRX KIND provider verification
+    provider = KrxListingProvider.get_instance()
+    if provider.is_available:
+        c_name = company_name or (s.company.name if s.company else None)
+        v = provider.verify_security(s.ticker, company_name=c_name, db_delisted_at=s.delisted_at)
+        return v.status
+
+    # 2. Fallback when official provider is unavailable (safe fallback, never assume LISTED)
     today = date.today()
     if s.delisted_at is not None and s.delisted_at <= today:
         return "DELISTED"
-    # When delisted_at is missing, effective_to alone must NOT confirm DELISTED without official proof -> UNKNOWN
     if s.effective_to is not None and s.effective_to <= today and s.delisted_at is None:
         return "UNKNOWN"
     if s.listed_at is not None and s.listed_at <= today and s.delisted_at is None:
         return "LISTED"
     return "UNKNOWN"
-
-
-def sort_securities_for_company(securities: List[Security]) -> List[Security]:
+def sort_securities_for_company(securities: List[Security], company_name: Optional[str] = None) -> List[Security]:
     def sec_sort_key(s: Security):
-        st = classify_security_listing_status(s)
+        st = classify_security_listing_status(s, company_name=company_name)
         priority = 3
         if st == "LISTED" and s.security_type == "COMMON":
             priority = 0
@@ -216,14 +222,18 @@ def search_companies(
     total_pages = (total_count + effective_limit - 1) // effective_limit if total_count > 0 else 0
     has_more = page < total_pages
 
+    provider = KrxListingProvider.get_instance()
+    source_name = provider.source_name if provider.is_available else "NONE"
+    as_of_val = provider.as_of_date if provider.is_available else None
+
     results = []
     for c in companies:
-        sorted_securities = sort_securities_for_company(c.securities)
-        primary_status = classify_security_listing_status(sorted_securities[0]) if sorted_securities else "UNLISTED"
+        sorted_securities = sort_securities_for_company(c.securities, company_name=c.name)
+        primary_status = classify_security_listing_status(sorted_securities[0], company_name=c.name) if sorted_securities else "UNLISTED"
 
         securities_info = []
         for idx, s in enumerate(sorted_securities):
-            s_status = classify_security_listing_status(s)
+            s_status = classify_security_listing_status(s, company_name=c.name)
             securities_info.append({
                 "security_id": s.id,
                 "ticker": s.ticker,
@@ -231,6 +241,8 @@ def search_companies(
                 "isin": s.isin,
                 "security_type": s.security_type,
                 "listing_status": s_status,
+                "listing_source": source_name,
+                "listing_as_of": as_of_val,
                 "is_primary": (idx == 0),
                 "listed_at": s.listed_at.isoformat() if s.listed_at else None,
                 "delisted_at": s.delisted_at.isoformat() if s.delisted_at else None,
@@ -261,6 +273,8 @@ def search_companies(
         "page_size": effective_limit,
         "total_pages": total_pages,
         "has_more": has_more,
+        "listing_source": source_name,
+        "listing_as_of": as_of_val,
         "data": results
     }
 

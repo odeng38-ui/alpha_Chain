@@ -225,4 +225,42 @@ const expectedSample = [
 assert.deepEqual(sortedSample, expectedSample, 'Sorting must order Hangul first, then English, then Others');
 console.log('✓ Test 9: Korean alphabetical sorting (Hangul -> English -> Others) verified');
 
-console.log('\nAll Phase 3.3-A tests passed successfully! (9/9)');
+// --- 5. Test KRX Official Reference Dataset & 7 Target Stocks ---
+const refPath = path.resolve(__dirname, '../../backend/app/data/krx_listing_reference.json');
+assert.ok(fs.existsSync(refPath), 'krx_listing_reference.json must exist');
+
+const refData = JSON.parse(fs.readFileSync(refPath, 'utf-8'));
+assert.equal(refData.metadata.source, 'KRX_KIND', 'Source must be KRX_KIND');
+assert.equal(refData.metadata.as_of, '2026-11-20', 'as_of date must be 2026-11-20');
+assert.ok(refData.metadata.listed_count >= 2700, 'Listed count must be >= 2700');
+assert.ok(refData.metadata.delisted_count >= 1800, 'Delisted count must be >= 1800');
+
+// Verify 7 target stocks in official reference
+const expectedStatuses = {
+  '005930': { status: 'LISTED', market: 'KOSPI' },   // 삼성전자
+  '042700': { status: 'LISTED', market: 'KOSPI' },   // 한미반도체
+  '079940': { status: 'LISTED', market: 'KOSDAQ' },  // 가비아
+  '053260': { status: 'LISTED', market: 'KOSDAQ' },  // 금강철강
+  '217820': { status: 'LISTED', market: 'KOSDAQ' },  // 원익피앤이
+  '0001A0': { status: 'LISTED', market: 'KOSDAQ' },  // 덕양에너젠
+  '131390': { status: 'DELISTED', market: 'KOSDAQ' },// 원익피앤이(구)
+  '053250': { status: 'DELISTED', market: 'KOSDAQ' },// 엔에스아이
+};
+
+for (const [ticker, exp] of Object.entries(expectedStatuses)) {
+  if (exp.status === 'LISTED') {
+    const item = refData.listed[ticker];
+    assert.ok(item, `Ticker ${ticker} must be in official listed records`);
+    assert.equal(item.status, 'LISTED');
+    assert.equal(item.market, exp.market);
+    assert.ok(item.listed_at, `Ticker ${ticker} must have official listed_at date`);
+  } else if (exp.status === 'DELISTED') {
+    const item = refData.delisted[ticker];
+    assert.ok(item, `Ticker ${ticker} must be in official delisted records`);
+    assert.equal(item.status, 'DELISTED');
+    assert.equal(item.market, exp.market);
+  }
+}
+console.log('✓ Test 10: Official KRX KIND reference verification passed for all 7 target stocks');
+
+console.log('\nAll Phase 3.3-A & 3.3-B Track A tests passed successfully! (10/10)');
